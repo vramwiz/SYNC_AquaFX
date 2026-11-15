@@ -1,0 +1,751 @@
+﻿program AquaFX_RenderTests;
+
+// 本番AUF2の描画コールバックと共通描画器を検査する。ホストアプリは起動しない。
+// 検査画像は検査EXEと同じフォルダー以下へ書き、本番のパラメータは保存しない。
+
+{$APPTYPE CONSOLE}
+{$R+}
+{$Q+}
+
+uses
+  System.SysUtils, System.Math, System.Diagnostics, Winapi.Windows,
+  Vcl.Imaging.pngimage,
+  AviUtl2FilterTypes in '..\Source\Lib\AviUtl2FilterTypes.pas',
+  AquaFX_Settings in '..\Source\Common\AquaFX_Settings.pas',
+  AquaFX_OilSurface in '..\Source\Common\AquaFX_OilSurface.pas',
+  AquaFX_Projection in '..\Source\Common\AquaFX_Projection.pas',
+  AquaFX_Renderer in '..\Source\Common\AquaFX_Renderer.pas';
+
+type
+  TGetTable = function: PFILTER_PLUGIN_TABLE; cdecl;
+  TInitialize = function(Version: Cardinal): Byte; cdecl;
+  TUninitialize = procedure; cdecl;
+
+var
+  Captured, HostInput: TAquaPixels;
+  CaptureWidth, CaptureHeight, SetCount: Integer;
+  ImageDirectory: string;
+  PluginPath: string;
+
+procedure Check(Condition: Boolean; const Message_: string);
+begin
+  if not Condition then raise Exception.Create(Message_);
+end;
+
+function Same(const A, B: TAquaPixels): Boolean;
+begin
+  Result := (Length(A) = Length(B)) and
+    ((Length(A) = 0) or CompareMem(@A[0], @B[0], Length(A) * SizeOf(TPIXEL_RGBA)));
+end;
+
+procedure SavePNG(const Pixels: TAquaPixels; Width, Height: Integer; const Name: string);
+var
+  PNG: TPngImage;
+  Row: PByte;
+  X, Y: Integer;
+begin
+  PNG := TPngImage.CreateBlank(COLOR_RGBALPHA, 8, Width, Height);
+  try
+    for Y := 0 to Height - 1 do
+    begin
+      Row := PNG.Scanline[Y];
+      for X := 0 to Width - 1 do
+      begin
+        Row[X * 3] := Pixels[Y * Width + X].B;
+        Row[X * 3 + 1] := Pixels[Y * Width + X].G;
+        Row[X * 3 + 2] := Pixels[Y * Width + X].R;
+        PNG.AlphaScanline[Y]^[X] := Pixels[Y * Width + X].A;
+      end;
+    end;
+    PNG.SaveToFile(ImageDirectory + Name);
+  finally
+    PNG.Free;
+  end;
+end;
+
+procedure GetImage(Buffer: PPIXEL_RGBA); cdecl;
+begin
+  if Length(HostInput) > 0 then
+    Move(HostInput[0], Buffer^, Length(HostInput) * SizeOf(TPIXEL_RGBA));
+end;
+
+procedure SetImage(Buffer: PPIXEL_RGBA; Width, Height: Integer); cdecl;
+begin
+  Inc(SetCount);
+  CaptureWidth := Width; CaptureHeight := Height;
+  SetLength(Captured, Width * Height);
+  Move(Buffer^, Captured[0], Length(Captured) * SizeOf(TPIXEL_RGBA));
+end;
+
+function AcceptItem(Obj: OBJECT_HANDLE; Effect, Item: PWideChar;
+  Value: PAnsiChar): Boolean; cdecl;
+begin
+  Result := (Obj = Pointer(1234)) and (string(Effect) = '水面演出:2') and
+    (Item <> nil) and (Value <> nil);
+end;
+
+function FindItem(Table: PFILTER_PLUGIN_TABLE; const Name, Kind: string): Pointer;
+var
+  Items: PPointer;
+  Header: PFILTER_ITEM_STRING;
+  I: Integer;
+begin
+  Items := PPointer(Table^.Items);
+  for I := 0 to 98 do
+  begin
+    if Items^ = nil then Break;
+    Header := PFILTER_ITEM_STRING(Items^);
+    if (string(Header^.Name) = Name) and (string(Header^.ItemType) = Kind) then Exit(Items^);
+    Inc(Items);
+  end;
+  raise Exception.Create('Missing standard item: ' + Name);
+end;
+
+function AlphaCenter(const Pixels: TAquaPixels; Width: Integer;
+  out X, Y: Double): Double;
+var
+  I: Integer;
+begin
+  X := 0; Y := 0; Result := 0;
+  for I := 0 to High(Pixels) do
+  begin
+    Result := Result + Pixels[I].A;
+    X := X + (I mod Width) * Pixels[I].A;
+    Y := Y + (I div Width) * Pixels[I].A;
+  end;
+  if Result > 0 then
+  begin
+    X := X / Result; Y := Y / Result;
+  end;
+end;
+
+procedure VerifyProjection;
+var
+  Settings: TAquaSettings;
+  Projection: TAquaProjection;
+  X1, Y1, X2, Y2, U, V, X, Y: Double;
+  I, J: Integer;
+begin
+  Settings := AquaPresetSettings(apPool);
+  Settings.Tracks[atTilt] := 0; Settings.Tracks[atPerspective] := 0;
+  Projection := TAquaProjection.Create(640, 360, Settings);
+  Check(Projection.SurfaceToScreen(0, 0, X, Y) and
+    SameValue(X, 320) and SameValue(Y, 180), 'Default plane center');
+  Settings.Tracks[atX] := 25; Settings.Tracks[atY] := -15;
+  Projection := TAquaProjection.Create(640, 360, Settings);
+  Check(Projection.SurfaceToScreen(0, 0, X, Y) and
+    SameValue(X, 345) and SameValue(Y, 165), 'XYZ pixel position');
+  Settings.Tracks[atX] := 0; Settings.Tracks[atY] := 0;
+  Settings.Tracks[atPerspective] := 65;
+  Settings.Tracks[atTilt] := 45;
+  Projection := TAquaProjection.Create(640, 360, Settings);
+  Check(Projection.SurfaceToScreen(1, -0.75, X1, Y1) and
+    Projection.SurfaceToScreen(1, 0.75, X2, Y2) and (X1 < X2), 'Positive tilt must put upper edge farther away');
+  Settings.Tracks[atTilt] := -45;
+  Projection := TAquaProjection.Create(640, 360, Settings);
+  Check(Projection.SurfaceToScreen(1, -0.75, X1, Y1) and
+    Projection.SurfaceToScreen(1, 0.75, X2, Y2) and (X1 > X2), 'Negative tilt must put lower edge farther away');
+
+  Settings.Tracks[atTilt] := 0; Settings.Tracks[atZ] := 0;
+  Projection := TAquaProjection.Create(640, 360, Settings);
+  Check(Projection.SurfaceToScreen(1, 0, X1, Y1), 'Base depth');
+  Settings.Tracks[atZ] := 100;
+  Projection := TAquaProjection.Create(640, 360, Settings);
+  Check(Projection.SurfaceToScreen(1, 0, X2, Y2) and (X2 < X1), 'Positive Z must move the surface farther away');
+
+  Settings.Tracks[atZ] := 0; Settings.Tracks[atPerspective] := 0;
+  Settings.Tracks[atRotateZ] := 90;
+  Projection := TAquaProjection.Create(640, 360, Settings);
+  Check(Projection.SurfaceToScreen(1, 0, X, Y) and SameValue(X, 320, 1E-8) and
+    (Y > 180), 'Positive Z rotation must be clockwise');
+  Settings.Tracks[atCenterX] := 20;
+  Projection := TAquaProjection.Create(640, 360, Settings);
+  Check(Projection.SurfaceToScreen(20 / (360 * 0.46), 0, X, Y) and
+    SameValue(X, 340, 1E-8) and SameValue(Y, 180, 1E-8), 'Rotation pivot did not stay fixed');
+
+  Settings.Tracks[atTilt] := -32; Settings.Tracks[atRotateX] := 17;
+  Settings.Tracks[atRotateY] := -24; Settings.Tracks[atRotateZ] := 13;
+  Settings.Tracks[atRotation] := 22; Settings.Tracks[atCenterY] := -18;
+  Settings.Tracks[atCenterZ] := 15; Settings.Tracks[atX] := 31;
+  Settings.Tracks[atY] := -9; Settings.Tracks[atZ] := 40;
+  Settings.Tracks[atZoom] := 135; Settings.Tracks[atAspect] := 25;
+  Settings.Tracks[atPerspective] := 65;
+  Projection := TAquaProjection.Create(640, 360, Settings);
+  for I := -4 to 4 do
+    for J := -4 to 4 do
+    begin
+      Check(Projection.SurfaceToScreen(I * 0.2, J * 0.2, X, Y), 'Combined transform projection');
+      Check(Projection.ScreenToSurface(X, Y, U, V) and
+        SameValue(U, I * 0.2, 1E-8) and SameValue(V, J * 0.2, 1E-8), 'Projection inverse mismatch');
+    end;
+  Settings.Tracks[atZoom] := 0;
+  Projection := TAquaProjection.Create(640, 360, Settings);
+  Check(not Projection.Valid, 'Zero zoom must make the surface invisible');
+  Settings := AquaPresetSettings(apPool); Settings.Tracks[atTilt] := 0;
+  Settings.Tracks[atZ] := -10000;
+  Projection := TAquaProjection.Create(640, 360, Settings);
+  Check(not Projection.SurfaceToScreen(0, 0, X, Y), 'Surface behind the camera was visible');
+  Writeln('PASS projection: signed tilt, XYZ, depth, rotation pivot, 81 inverse samples, zero zoom and camera clipping');
+end;
+
+procedure VerifyNativePlacement(Table: PFILTER_PLUGIN_TABLE; var Video: TFILTER_PROC_VIDEO);
+const
+  Names: array[0..11] of PWideChar = ('X', 'Y', 'Z', '中心X', '中心Y', '中心Z',
+    'X軸回転', 'Y軸回転', 'Z軸回転', '拡大率', '縦横比', '透明度');
+  Values: array[0..11] of Double = (11, -7, 13, 2, 3, 4, 5, -6, 7, 123, 20, 25);
+var
+  Edit: TEDIT_SECTION;
+  Preset: PFILTER_ITEM_SELECT;
+  Button: PFILTER_ITEM_BUTTON;
+  Item: PFILTER_ITEM_TRACK;
+  A, Positive, Negative, Combined: TAquaPixels;
+  I, X, Y: Integer;
+  X1, Y1, X2, Y2, Area1, Area2: Double;
+
+  procedure SetNumber(const Name: string; Value: Double);
+  begin
+    PFILTER_ITEM_TRACK(FindItem(Table, Name, 'track'))^.Value := Value;
+  end;
+
+  procedure Frame;
+  begin
+    SetCount := 0;
+    Check(Table^.Func_Proc_Video(@Video) = 1, 'Transform frame callback');
+    Check((SetCount = 1) and (CaptureWidth = 204) and (CaptureHeight = 204), 'Transform frame size');
+  end;
+
+begin
+  Video.Object_^.Flag := OBJECT_FLAG_FILTER_OBJECT;
+  Edit := Default(TEDIT_SECTION); Edit.SetObjectItemValue := AcceptItem;
+  Preset := FindItem(Table, 'プリセット', 'select');
+  Button := FindItem(Table, '設定', 'button');
+  for I := 0 to High(Names) do SetNumber(string(Names[I]), Values[I]);
+  Preset^.Value := Ord(apPool);
+  Button^.Callback2(@Edit, Pointer(1234), '水面演出:2', '設定');
+  for I := 0 to High(Names) do
+  begin
+    Item := FindItem(Table, string(Names[I]), 'track');
+    Check(SameValue(Item^.Value, Values[I]), 'Preset changed placement: ' + string(Names[I]));
+    SetNumber(string(Names[I]), 0);
+  end;
+  SetNumber('拡大率', 100);
+  Item := FindItem(Table, '3D傾斜角度', 'track');
+  Check((Item^.S = -89) and (Item^.E = 89), 'Signed tilt control range');
+  SetNumber('3D傾斜角度', 45); Frame; Positive := Copy(Captured);
+  SavePNG(Positive, 204, 204, 'tilt_positive.png');
+  SetNumber('3D傾斜角度', -45); Frame; Negative := Copy(Captured);
+  SavePNG(Negative, 204, 204, 'tilt_negative.png');
+  Check(not Same(Positive, Negative), 'Signed tilt produced the same frame');
+  SetLength(Combined, 408 * 204);
+  for Y := 0 to 203 do
+    for X := 0 to 203 do
+    begin
+      Combined[Y * 408 + X] := Positive[Y * 204 + X];
+      Combined[Y * 408 + X + 204] := Negative[Y * 204 + X];
+    end;
+  SavePNG(Combined, 408, 204, 'tilt_comparison.png');
+
+  // 3軸回転と中心XYZが、本番の各トラックから描画へ接続されていることを確認する。
+  SetNumber('3D傾斜角度', 0); SetNumber('拡大率', 60);
+  Frame; A := Copy(Captured);
+  for I := 6 to 8 do
+  begin
+    SetNumber(string(Names[I]), 30); Frame;
+    Check(not Same(A, Captured), 'Rotation control did not affect native output: ' + string(Names[I]));
+    SetNumber(string(Names[I]), 0);
+  end;
+  SetNumber('X軸回転', 20); SetNumber('Y軸回転', 17); SetNumber('Z軸回転', 19);
+  Frame; A := Copy(Captured);
+  for I := 3 to 5 do
+  begin
+    SetNumber(string(Names[I]), 15); Frame;
+    Check(not Same(A, Captured), 'Center control did not affect native output: ' + string(Names[I]));
+    SetNumber(string(Names[I]), 0);
+  end;
+  SetNumber('X軸回転', 0); SetNumber('Y軸回転', 0); SetNumber('Z軸回転', 0);
+  Frame; A := Copy(Captured);
+  SetNumber('縦横比', 50); Frame;
+  Check(not Same(A, Captured), 'Positive aspect control had no effect');
+  Positive := Copy(Captured);
+  SetNumber('縦横比', -50); Frame;
+  Check(not Same(A, Captured) and not Same(Positive, Captured), 'Negative aspect control had no effect');
+  SetNumber('縦横比', 0);
+
+  SetNumber('3D傾斜角度', 0); SetNumber('遠近感', 0); SetNumber('拡大率', 60);
+  Frame; A := Copy(Captured); Area1 := AlphaCenter(A, 204, X1, Y1);
+  SetNumber('X', 25); SetNumber('Y', -15); Frame;
+  Area2 := AlphaCenter(Captured, 204, X2, Y2);
+  Check((Area1 > 0) and SameValue(Area1, Area2, 1E-6) and
+    SameValue(X2 - X1, 25, 0.05) and SameValue(Y2 - Y1, -15, 0.05), 'Native XY placement');
+  SetNumber('X', 0); SetNumber('Y', 0); SetNumber('遠近感', 65); SetNumber('Z', 100);
+  Frame; Area2 := AlphaCenter(Captured, 204, X2, Y2);
+  Check((Area2 > 0) and (Area2 < Area1), 'Native Z depth');
+  SetNumber('Z', 0); SetNumber('遠近感', 0); SetNumber('透明度', 50); Frame;
+  Check(Captured[102 * 204 + 102].A = 128, 'Native transparency percentage');
+  SetNumber('透明度', 100); Frame;
+  for I := 0 to High(Captured) do Check(Captured[I].A = 0, 'Fully transparent surface');
+  SetNumber('透明度', 0); SetNumber('拡大率', 0); Frame;
+  for I := 0 to High(Captured) do Check(Captured[I].A = 0, 'Zero scale surface');
+
+  // 画像の透明領域も同じ投影で移動し、透明色が描画範囲へにじまないことを確認する。
+  SetNumber('拡大率', 100);
+  PFILTER_ITEM_SELECT(FindItem(Table, '表示モード', 'select'))^.Value := Ord(adImage);
+  PFILTER_ITEM_SELECT(FindItem(Table, '水面形状', 'select'))^.Value := Ord(asImage);
+  FillChar(HostInput[0], Length(HostInput) * SizeOf(TPIXEL_RGBA), 0);
+  for Y := 80 to 119 do
+    for X := 80 to 119 do
+    begin
+      HostInput[Y * 204 + X].R := 150; HostInput[Y * 204 + X].A := 128;
+    end;
+  Frame; A := Copy(Captured); Area1 := AlphaCenter(A, 204, X1, Y1);
+  SetNumber('X', 20); Frame; Area2 := AlphaCenter(Captured, 204, X2, Y2);
+  Check((Area1 > 0) and (Area2 > 0) and SameValue(X2 - X1, 20, 0.1) and
+    SameValue(Y2, Y1, 0.1), 'Projected input alpha did not move with the image');
+  SavePNG(Captured, 204, 204, 'image_placement.png');
+  Writeln('PASS native placement: 12 controls, preset preservation, both tilt signs, XYZ, transparency, zero scale and image alpha');
+end;
+
+procedure VerifyNativeOil(Table: PFILTER_PLUGIN_TABLE; var Video: TFILTER_PROC_VIDEO);
+var
+  Edit: TEDIT_SECTION;
+  OilColor: PFILTER_ITEM_COLOR;
+  WithOil, WithoutOil, Frozen: TAquaPixels;
+  I, Changed, Unchanged: Integer;
+
+  procedure SetNumber(const Name: string; Value: Double);
+  begin
+    PFILTER_ITEM_TRACK(FindItem(Table, Name, 'track'))^.Value := Value;
+  end;
+
+  procedure Frame;
+  begin
+    SetCount := 0; Table^.Func_Proc_Video(@Video);
+    Check(SetCount = 1, 'Oil frame was not returned');
+  end;
+
+  procedure Preset(Value: TAquaPreset);
+  begin
+    PFILTER_ITEM_SELECT(FindItem(Table, 'プリセット', 'select'))^.Value := Ord(Value);
+    PFILTER_ITEM_BUTTON(FindItem(Table, '設定', 'button'))^.Callback2(
+      @Edit, Pointer(1234), '水面演出:2', '設定');
+  end;
+
+begin
+  Video.Object_^.Flag := OBJECT_FLAG_FILTER_OBJECT;
+  Edit := Default(TEDIT_SECTION); Edit.SetObjectItemValue := AcceptItem;
+  for I := Ord(atX) to Ord(atTransparency) do
+    SetNumber(string(AQUA_TRACK_DEFINITIONS[TAquaTrack(I)].Name), 0);
+  SetNumber('拡大率', 100);
+  PFILTER_ITEM_SELECT(FindItem(Table, '表示モード', 'select'))^.Value := Ord(adBackground);
+  Preset(apOil);
+  Frame; WithOil := Copy(Captured);
+  SetNumber('油膜の量', 0); Frame; WithoutOil := Copy(Captured);
+  Changed := 0; Unchanged := 0;
+  for I := 0 to High(Captured) do
+  begin
+    Check(WithOil[I].A = WithoutOil[I].A, 'Oil film changed the background alpha');
+    if WithoutOil[I].A <> 255 then Continue;
+    if CompareMem(@WithOil[I], @WithoutOil[I], SizeOf(TPIXEL_RGBA)) then Inc(Unchanged)
+    else Inc(Changed);
+  end;
+  Check((Changed > 500) and (Unchanged > 500), 'Oil must form separate patches over visible water');
+  SetNumber('油膜サイズ', 25); SetNumber('油膜光沢', 0);
+  OilColor := FindItem(Table, '油膜色', 'color');
+  OilColor^.R := 255; OilColor^.G := 0; OilColor^.B := 0;
+  Frame;
+  Check(Same(WithoutOil, Captured), 'Disabled film depends on its color, size or gloss');
+  Preset(apOil);
+  SetNumber('油膜サイズ', 25); Frame;
+  Check(not Same(WithOil, Captured), 'Oil size control did not change native output');
+  Preset(apOil); SetNumber('油膜光沢', 0); Frame;
+  Check(not Same(WithOil, Captured), 'Oil gloss control did not change native output');
+  Preset(apOil); OilColor^.R := 50; OilColor^.G := 100; OilColor^.B := 240; Frame;
+  Check(not Same(WithOil, Captured), 'Oil color control did not change native output');
+  Preset(apOil);
+  Video.Object_^.Time := 1.25; Frame; Frozen := Copy(Captured);
+  Video.Object_^.Time := 3; Frame;
+  Check(not Same(Frozen, Captured), 'Oil film does not animate');
+  Video.Object_^.Time := 1.25; Frame;
+  Check(Same(Frozen, Captured), 'Reverse seeking changed the native oil film');
+  Preset(apPool);
+  Check(PFILTER_ITEM_TRACK(FindItem(Table, '油膜の量', 'track'))^.Value = 0,
+    'Switching from oil to water left an unwanted oil film');
+  Writeln('PASS native oil: separate patches, visible water, amount zero, size, gloss, color, animation, reverse seek and reset');
+end;
+
+// 本番の画像モードで、膜だけの配置・透明度・シークと元画像の保持を検査する。
+procedure VerifyNativeOilOverlay(Table: PFILTER_PLUGIN_TABLE; var Video: TFILTER_PROC_VIDEO);
+var
+  Edit: TEDIT_SECTION;
+  First, Comparison: TAquaPixels;
+  I, X, Y, Changed, TexturePairs: Integer;
+  TextureContrast: Double;
+
+  procedure SetNumber(const Name: string; Value: Double);
+  begin
+    PFILTER_ITEM_TRACK(FindItem(Table, Name, 'track'))^.Value := Value;
+  end;
+
+  procedure Frame;
+  begin
+    SetCount := 0; Table^.Func_Proc_Video(@Video);
+    Check(SetCount = 1, 'Oil overlay frame was not returned');
+  end;
+
+begin
+  Edit := Default(TEDIT_SECTION); Edit.SetObjectItemValue := AcceptItem;
+  PFILTER_ITEM_SELECT(FindItem(Table, '表示モード', 'select'))^.Value := Ord(adOilOverlay);
+  PFILTER_ITEM_SELECT(FindItem(Table, 'プリセット', 'select'))^.Value := Ord(apOil);
+  PFILTER_ITEM_BUTTON(FindItem(Table, '設定', 'button'))^.Callback2(
+    @Edit, Pointer(1234), '水面演出:2', '設定');
+  Check(PFILTER_ITEM_SELECT(FindItem(Table, '表示モード', 'select'))^.Value = Ord(adOilOverlay),
+    'Preset changed oil overlay mode');
+  for I := Ord(atX) to Ord(atTransparency) do
+    SetNumber(string(AQUA_TRACK_DEFINITIONS[TAquaTrack(I)].Name), 0);
+  SetNumber('拡大率', 100); SetNumber('3D傾斜角度', 0); SetNumber('遠近感', 0);
+  Video.Object_^.Flag := 0; Video.Object_^.Width := 204; Video.Object_^.Height := 204;
+  Video.Object_^.Time := 1.25; Video.GetImageData := GetImage;
+  SetLength(HostInput, 204 * 204);
+  for Y := 0 to 203 do
+    for X := 0 to 203 do
+    begin
+      I := Y * 204 + X;
+      HostInput[I].R := 70 + ((X + Y) mod 2) * 100;
+      HostInput[I].G := 60 + (Y mod 24) * 3;
+      HostInput[I].B := 30 + (X mod 24) * 2;
+      HostInput[I].A := 80 + (X mod 176);
+      if Y < 8 then HostInput[I].A := 0;
+    end;
+  Frame; First := Copy(Captured); Changed := 0; TexturePairs := 0; TextureContrast := 0;
+  for I := 0 to High(First) do
+  begin
+    Check(First[I].A = HostInput[I].A, 'Overlay changed original alpha or moved the image');
+    if not CompareMem(@First[I], @HostInput[I], SizeOf(TPIXEL_RGBA)) then Inc(Changed);
+    if (I div 204 < 8) or ((I mod 204 < 8) and (I div 204 > 195)) then
+      Check(CompareMem(@First[I], @HostInput[I], SizeOf(TPIXEL_RGBA)), 'Overlay painted outside its mask');
+    if (I mod 204 > 0) and (I div 204 > 8) then
+    begin
+      TextureContrast := TextureContrast + Abs(Integer(First[I].R) - First[I - 1].R);
+      Inc(TexturePairs);
+    end;
+  end;
+  Check(Changed > 500, 'Overlay did not produce visible oil');
+  Check(TextureContrast / TexturePairs > 85, 'Overlay erased source texture contrast');
+  SetLength(Comparison, 408 * 204);
+  for Y := 0 to 203 do
+  begin
+    Move(HostInput[Y * 204], Comparison[Y * 408], 204 * SizeOf(TPIXEL_RGBA));
+    Move(First[Y * 204], Comparison[Y * 408 + 204], 204 * SizeOf(TPIXEL_RGBA));
+  end;
+  SavePNG(Comparison, 408, 204, 'oil_overlay_check.png');
+  Video.Object_^.Time := 4; Frame;
+  Check(not Same(First, Captured), 'Overlay did not animate');
+  Video.Object_^.Time := 1.25; Frame;
+  Check(Same(First, Captured), 'Overlay reverse seek changed the result');
+  SetNumber('X', 10000); Frame;
+  Check(Same(HostInput, Captured), 'Moving film also moved the input image');
+  SetNumber('X', 0); SetNumber('透明度', 100); Frame;
+  Check(Same(HostInput, Captured), 'Hidden film changed the input image');
+  SetNumber('透明度', 0); SetNumber('拡大率', 0); Frame;
+  Check(Same(HostInput, Captured), 'Zero film scale changed the input image');
+  SetNumber('拡大率', 100); SetNumber('油膜の量', 0); Frame;
+  Check(Same(HostInput, Captured), 'Zero film amount changed the input image');
+  SetNumber('油膜の量', 48); Video.GetImageData := nil; Frame;
+  for I := 0 to High(Captured) do Check(Captured[I].A = 0, 'Overlay without input generated a background');
+  Writeln('PASS native oil overlay: source texture, alpha, mask, placement, opacity, zero amount, animation and reverse seek');
+end;
+
+procedure VerifyPlugin(const Path: string);
+var
+  Module: HMODULE;
+  Initialize: TInitialize;
+  Uninitialize: TUninitialize;
+  GetTable: TGetTable;
+  Table: PFILTER_PLUGIN_TABLE;
+  Video: TFILTER_PROC_VIDEO;
+  Scene: TSCENE_INFO;
+  Obj: TOBJECT_INFO;
+  Edit: TEDIT_SECTION;
+  Items: PPointer;
+  Preset: PFILTER_ITEM_SELECT;
+  Button: PFILTER_ITEM_BUTTON;
+  First: TAquaPixels;
+  PresetImages: array[0..AQUA_PRESET_COUNT - 1] of TAquaPixels;
+  I, J: Integer;
+begin
+  Module := LoadLibrary(PChar(Path));
+  Check(Module <> 0, 'LoadLibrary: ' + Path);
+  try
+    @Initialize := GetProcAddress(Module, 'InitializePlugin');
+    @Uninitialize := GetProcAddress(Module, 'UninitializePlugin');
+    @GetTable := GetProcAddress(Module, 'GetFilterPluginTable');
+    Check(Assigned(Initialize) and Assigned(Uninitialize) and Assigned(GetTable), 'Exports');
+    Check((Initialize(2011599) = 0) and (Initialize(2011700) = 1), 'Version gate');
+    Table := GetTable;
+    Check(Assigned(Table^.Func_Create) and Assigned(Table^.Func_Destroy), 'Session callbacks');
+    Check(Table^.Flag = 25, 'Production filter flags');
+    Items := PPointer(Table^.Items);
+    Preset := PFILTER_ITEM_SELECT(Items^); Inc(Items);
+    Button := PFILTER_ITEM_BUTTON(Items^);
+    Check((string(Preset^.Name) = 'プリセット') and (string(Button^.Name) = '設定'), 'Preset order');
+    Scene := Default(TSCENE_INFO); Scene.Width := 204; Scene.Height := 204;
+    Obj := Default(TOBJECT_INFO); Obj.Time := 32 / 30;
+    Obj.Flag := OBJECT_FLAG_FILTER_OBJECT;
+    Video := Default(TFILTER_PROC_VIDEO);
+    Video.Scene := @Scene; Video.Object_ := @Obj;
+    Video.SetImageData := SetImage;
+    Video.UserData := Table^.Func_Create(1);
+    Check(Video.UserData <> nil, 'Session allocation');
+    try
+      // 利用者の確認プロジェクトと同じ、素材なし・204x204・背景あり・海。
+      SetCount := 0;
+      Check(Table^.Func_Proc_Video(@Video) = 1, 'Video callback');
+      Check((SetCount = 1) and (CaptureWidth = 204) and (CaptureHeight = 204), 'No image was returned');
+      for I := 0 to High(Captured) do Check(Captured[I].A = 255, 'Sea is transparent');
+      First := Copy(Captured);
+      SavePNG(Captured, 204, 204, 'sea_204.png');
+      // 入力取得APIがあり、入力画像が全面透明の場合も同じ水面を返す。
+      Obj.Width := 204; Obj.Height := 204;
+      SetLength(HostInput, 204 * 204);
+      FillChar(HostInput[0], Length(HostInput) * SizeOf(TPIXEL_RGBA), 0);
+      Video.GetImageData := GetImage;
+      SetCount := 0; Table^.Func_Proc_Video(@Video);
+      Check((SetCount = 1) and Same(First, Captured), 'Empty filter input suppressed the generated sea');
+      Obj.Time := 2.5; Table^.Func_Proc_Video(@Video);
+      Check(not Same(First, Captured), 'Water does not animate');
+      Obj.Time := 32 / 30; Table^.Func_Proc_Video(@Video);
+      Check(Same(First, Captured), 'Seeking changed the result');
+      Edit := Default(TEDIT_SECTION); Edit.SetObjectItemValue := AcceptItem;
+      for I := 0 to AQUA_PRESET_COUNT - 1 do
+      begin
+        Preset^.Value := I;
+        Button^.Callback2(@Edit, Pointer(1234), '水面演出:2', '設定');
+        SetCount := 0; Table^.Func_Proc_Video(@Video);
+        Check(SetCount = 1, 'Preset did not produce a frame');
+        Check(Captured[102 * 204 + 102].A > 0, 'Preset surface is invisible');
+        for J := 0 to I - 1 do
+          Check(not Same(PresetImages[J], Captured), 'Preset images are identical');
+        PresetImages[I] := Copy(Captured);
+      end;
+      // 通常の画像へのフィルターでは透明部分を維持する。
+      begin
+        Obj.Flag := 0; Obj.Width := 204; Obj.Height := 204;
+        SetLength(HostInput, 204 * 204);
+        FillChar(HostInput[0], Length(HostInput) * SizeOf(TPIXEL_RGBA), 0);
+        for I := 204 * 102 to High(HostInput) do HostInput[I].A := 255;
+        Video.GetImageData := GetImage;
+        Preset^.Value := 0; Button^.Callback2(@Edit, Pointer(1234), '水面演出:2', '設定');
+        Table^.Func_Proc_Video(@Video);
+        for I := 0 to 204 * 102 - 1 do Check(Captured[I].A = 0, 'Transparent input was painted');
+      end;
+      VerifyNativePlacement(Table, Video);
+      VerifyNativeOil(Table, Video);
+      VerifyNativeOilOverlay(Table, Video);
+      Video.Object_ := nil;
+      Check(Table^.Func_Proc_Video(@Video) = 1, 'Invalid callback handling');
+    finally
+      Table^.Func_Destroy(1, Video.UserData);
+    end;
+    Uninitialize;
+    Writeln('PASS native callback: ', ExtractFileName(Path));
+  finally
+    FreeLibrary(Module);
+  end;
+end;
+
+// 本番AUF2から同じ時刻の各プリセットをPNGへ出す。ホストアプリは起動しない。
+procedure ExportNativePresets(const Path: string);
+var
+  Module: HMODULE;
+  Initialize: TInitialize;
+  Uninitialize: TUninitialize;
+  GetTable: TGetTable;
+  Table: PFILTER_PLUGIN_TABLE;
+  Scene: TSCENE_INFO;
+  Obj: TOBJECT_INFO;
+  Video: TFILTER_PROC_VIDEO;
+  Edit: TEDIT_SECTION;
+  I, Y: Integer;
+  Sea, Oil, Comparison: TAquaPixels;
+begin
+  Module := LoadLibrary(PChar(Path));
+  Check(Module <> 0, 'Preview LoadLibrary');
+  try
+    @Initialize := GetProcAddress(Module, 'InitializePlugin');
+    @Uninitialize := GetProcAddress(Module, 'UninitializePlugin');
+    @GetTable := GetProcAddress(Module, 'GetFilterPluginTable');
+    Check(Initialize(2011700) = 1, 'Preview InitializePlugin');
+    Table := GetTable;
+    Scene := Default(TSCENE_INFO); Scene.Width := 640; Scene.Height := 360;
+    Obj := Default(TOBJECT_INFO); Obj.Flag := OBJECT_FLAG_FILTER_OBJECT; Obj.Time := 1.25;
+    Video := Default(TFILTER_PROC_VIDEO); Video.Scene := @Scene; Video.Object_ := @Obj;
+    Video.SetImageData := SetImage; Video.UserData := Table^.Func_Create(100);
+    Check(Video.UserData <> nil, 'Preview session');
+    try
+      Edit := Default(TEDIT_SECTION); Edit.SetObjectItemValue := AcceptItem;
+      for I := 0 to AQUA_PRESET_COUNT - 1 do
+      begin
+        PFILTER_ITEM_SELECT(FindItem(Table, 'プリセット', 'select'))^.Value := I;
+        PFILTER_ITEM_BUTTON(FindItem(Table, '設定', 'button'))^.Callback2(
+          @Edit, Pointer(1234), '水面演出:2', '設定');
+        SetCount := 0; Table^.Func_Proc_Video(@Video);
+        Check((SetCount = 1) and (CaptureWidth = 640) and (CaptureHeight = 360), 'Preview frame');
+        SavePNG(Captured, 640, 360, Format('preset_%.2d.png', [I]));
+        if I = Ord(apSea) then Sea := Copy(Captured);
+        if I = Ord(apOil) then Oil := Copy(Captured);
+      end;
+      SetLength(Comparison, 1280 * 360);
+      for Y := 0 to 359 do
+      begin
+        Move(Sea[Y * 640], Comparison[Y * 1280], 640 * SizeOf(TPIXEL_RGBA));
+        Move(Oil[Y * 640], Comparison[Y * 1280 + 640], 640 * SizeOf(TPIXEL_RGBA));
+      end;
+      SavePNG(Comparison, 1280, 360, 'water_oil.png');
+    finally
+      Table^.Func_Destroy(100, Video.UserData);
+    end;
+    Uninitialize;
+  finally
+    FreeLibrary(Module);
+  end;
+  Writeln('Exported 14 native preset previews: ', ImageDirectory);
+end;
+
+procedure VerifyOilRenderer;
+var
+  Renderer: TAquaRenderer;
+  Settings: TAquaSettings;
+  Input, A, B, C: TAquaPixels;
+  I: Integer;
+  Visible: Boolean;
+  Timer: TStopwatch;
+begin
+  Renderer := TAquaRenderer.Create;
+  try
+    Settings := AquaPresetSettings(apOil);
+    Renderer.Render(Input, 320, 240, 0, Settings, False, A);
+    Renderer.Render(Input, 320, 240, 2, Settings, False, B);
+    Check(not Same(A, B), 'Oil renderer animation');
+    Renderer.Render(Input, 320, 240, 0, Settings, False, C);
+    Check(Same(A, C), 'Oil renderer reverse seek');
+    Settings.Tracks[atSeed] := 99;
+    Renderer.Render(Input, 320, 240, 0, Settings, False, C);
+    Check(not Same(A, C), 'Oil renderer seed');
+    Settings.DisplayMode := adEffectsOnly;
+    Settings.Tracks[atHighlight] := 0; Settings.Tracks[atFoam] := 0;
+    Renderer.Render(Input, 320, 240, 0, Settings, False, A);
+    Visible := False;
+    for I := 0 to High(A) do
+    begin
+      Visible := Visible or (A[I].A > 0);
+      Check(A[I].A < 255, 'Effects-only film must retain transparency');
+      if A[I].A = 0 then Check((A[I].R = 0) and (A[I].G = 0) and (A[I].B = 0), 'Oil transparent RGB');
+    end;
+    Check(Visible, 'Effects-only oil is invisible');
+    Settings.Tracks[atOilAmount] := 0;
+    Renderer.Render(Input, 320, 240, 0, Settings, False, A);
+    for I := 0 to High(A) do Check(A[I].A = 0, 'Disabled oil left an overlay');
+    Settings := AquaPresetSettings(apOil); Settings.DisplayMode := adImage;
+    Settings.Tracks[atTilt] := 0; Settings.Tracks[atPerspective] := 0;
+    SetLength(Input, 64 * 64);
+    FillChar(Input[0], Length(Input) * SizeOf(TPIXEL_RGBA), 0);
+    for I := Length(Input) div 2 to High(Input) do
+    begin
+      Input[I].R := 70; Input[I].G := 120; Input[I].B := 160; Input[I].A := 128;
+    end;
+    Renderer.Render(Input, 64, 64, 0, Settings, True, A);
+    for I := 0 to High(A) do Check(A[I].A <= Input[I].A, 'Oil painted outside input alpha');
+    Settings := AquaPresetSettings(apOil); SetLength(Input, 0);
+    Timer := TStopwatch.StartNew;
+    for I := 0 to 2 do Renderer.Render(Input, 1920, 1080, I * 0.1, Settings, False, A);
+    Writeln('Oil Full HD average milliseconds: ', Timer.Elapsed.TotalMilliseconds / 3:0:1);
+    Writeln('PASS oil renderer: seed, reverse seek, transparent overlay, zero amount and image alpha');
+  finally
+    Renderer.Free;
+  end;
+end;
+
+procedure VerifyRenderer;
+var
+  Renderer: TAquaRenderer;
+  Settings: TAquaSettings;
+  Input, A, B, C: TAquaPixels;
+  I: Integer;
+  Visible, Transparent: Boolean;
+  Timer: TStopwatch;
+begin
+  Renderer := TAquaRenderer.Create;
+  try
+    Settings := AquaPresetSettings(apSea);
+    Renderer.Render(Input, 1280, 720, 0, Settings, False, A);
+    SavePNG(A, 1280, 720, 'sea.png');
+    Renderer.Render(Input, 1280, 720, 1.25, Settings, False, B);
+    Check(not Same(A, B), 'Sea animation is static');
+    SavePNG(B, 1280, 720, 'sea_next.png');
+    Renderer.Render(Input, 1280, 720, 0, Settings, False, C);
+    Check(Same(A, C), 'Reverse seek is not deterministic');
+    Settings.Tracks[atSeed] := 99;
+    Renderer.Render(Input, 1280, 720, 0, Settings, False, C);
+    Check(not Same(A, C), 'Seed has no effect');
+    Settings := AquaPresetSettings(apCoffee);
+    Renderer.Render(Input, 640, 360, 0, Settings, False, A);
+    Check((A[0].A = 0) and (A[180 * 640 + 320].A = 255), 'Projected shape mask');
+    SavePNG(A, 640, 360, 'coffee.png');
+    Settings := AquaPresetSettings(apSea); Settings.DisplayMode := adEffectsOnly;
+    Renderer.Render(Input, 640, 360, 0, Settings, False, A);
+    Visible := False; Transparent := False;
+    for I := 0 to High(A) do
+    begin
+      Visible := Visible or (A[I].A > 0); Transparent := Transparent or (A[I].A < 255);
+    end;
+    Check(Visible and Transparent, 'Effects-only mode has no transparent overlay');
+    Settings.Tracks[atHighlight] := 0; Settings.Tracks[atFoam] := 0;
+    Renderer.Render(Input, 640, 360, 0, Settings, False, A);
+    for I := 0 to High(A) do
+      Check((A[I].A = 0) and (A[I].R = 0) and (A[I].G = 0) and (A[I].B = 0), 'Transparent RGB is not zero');
+    Settings := AquaPresetSettings(apSea); Settings.DisplayMode := adImage;
+    SetLength(Input, 64 * 64);
+    FillChar(Input[0], Length(Input) * SizeOf(TPIXEL_RGBA), 0);
+    for I := Length(Input) div 2 to High(Input) do
+    begin
+      Input[I].R := 160; Input[I].G := 90; Input[I].B := 40; Input[I].A := 128;
+    end;
+    Renderer.Render(Input, 64, 64, 0, Settings, True, A);
+    for I := 0 to High(A) do
+      Check((A[I].A <= Input[I].A) and ((Input[I].A <> 0) or (A[I].A = 0)), 'Image alpha boundary');
+    Renderer.Render(Input, 0, 64, 0, Settings, False, A);
+    Check(Length(A) = 0, 'Invalid size');
+    Settings := AquaPresetSettings(apSea); SetLength(Input, 0);
+    Timer := TStopwatch.StartNew;
+    for I := 0 to 2 do Renderer.Render(Input, 1920, 1080, I * 0.1, Settings, False, A);
+    Writeln('Full HD average milliseconds: ', Timer.Elapsed.TotalMilliseconds / 3:0:1);
+    Writeln('PASS renderer: animation, reverse seek, seed, projected shape, transparency, input alpha and invalid size');
+  finally
+    Renderer.Free;
+  end;
+end;
+
+begin
+  try
+    ImageDirectory := IncludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0))) + 'Images\';
+    if ParamStr(2) <> '' then ImageDirectory := IncludeTrailingPathDelimiter(ParamStr(2));
+    PluginPath := ParamStr(1);
+    if PluginPath = '' then PluginPath := 'C:\ProgramData\aviutl2\Plugin\SYNC_AquaFX\SYNC_AquaFX.auf2';
+    ForceDirectories(ImageDirectory);
+    if ParamStr(3) <> '--previews-only' then
+    begin
+      VerifyProjection;
+      VerifyRenderer;
+      VerifyOilRenderer;
+      VerifyPlugin(PluginPath);
+      Writeln('ALL TESTS PASSED');
+    end;
+    ExportNativePresets(PluginPath);
+  except
+    on E: Exception do
+    begin
+      Writeln(E.ClassName, ': ', E.Message);
+      Halt(1);
+    end;
+  end;
+end.
