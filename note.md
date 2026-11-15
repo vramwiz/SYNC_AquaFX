@@ -118,3 +118,12 @@ cmd /c 'call "C:\Program Files (x86)\Embarcadero\Studio\37.0\bin\rsvars.bat" && 
 - v0.5.0の配布AUF2のXXH3-128は `da4178787ea8f4afce09b8460aa2330f`。ユーザーのAviUtl2終了連絡後、本番配置へ上書き済み。配置AUF2・検査済みRelease・配布ZIP・JSONのハッシュ一致と、本体が1つであることを確認した。
 
 - 配置後は別のカレントフォルダーから引数なしの setup/make_release_zip.bat も実行し、終了コード0と、再生成ZIPの本体が配置AUF2と一致することを確認した。
+
+## README・ライセンス類の配布整備
+
+- 参考元 `SYNC_ParticleFX` の README・配布用README・ライセンス類と照合した。ルートREADMEにインストール・更新・削除、4表示モード、描画上限、公開先、配布ZIPの作成方法を記載した。開発の予定と現在の機能を区別し、利用者向けの配布READMEを `setup/README.md` にまとめた。
+- `LICENSE` のGPL v3全文と `ThirdParty/LICENSE.AviUtl2-SDK.txt` のMIT全文は参考元とSHA-256が一致する。第三者表記に編集APIの方式の参考元、開発環境、検査画像の扱いを追記した。
+- 文書のみの変更で、本体は再ビルドしていない。実際の配布バッチでZIPを再生成し、全5ファイルを元ファイルとSHA-256で照合した。本番配置先へも同じREADME・ライセンス4ファイルを配置した。
+- この文書更新前後でZIPのSHA-256は `5602BDA712B7E253FD6D4936126FAF964CB021A5DD87D7ED1492F940860463E8` から `89EDF25603617D97BB429F204F779E0E34978D6C8B27BECBF98A91A3C803A723` へ変わった。
+- AUF2のSHA-256は `536BC21666617E8E4A574F1833DCE76978244D39E899021687682115C72203D4` で変わらない。格納AUF2のXXH3-128は `f452c856ef96343de19103bbb923b22a` で、今回の作業開始時のJSON末尾の値と一致したためJSONも変更していない。JSONのハッシュ対象はZIP全体ではなくAUF2本体。
+- 比較結果は `Win64/Verification/DocsReleaseBefore.json` / `DocsReleaseAfter.json` に記録した。
