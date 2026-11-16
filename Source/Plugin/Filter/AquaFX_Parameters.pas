@@ -34,6 +34,7 @@ var
   PlacementGroup, PlacementGroupEnd: TFILTER_ITEM_GROUP;
   OilGroup, OilGroupEnd: TFILTER_ITEM_GROUP;
   VortexGroup, VortexGroupEnd: TFILTER_ITEM_GROUP;
+  ShoreGroup, ShoreGroupEnd: TFILTER_ITEM_GROUP;
 
 procedure ApplyPreset(Edit: PEDIT_SECTION; Obj: OBJECT_HANDLE;
   Effect, Item: PWideChar); cdecl;
@@ -154,6 +155,12 @@ begin
       Settings.Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].MinValue,
       AQUA_TRACK_DEFINITIONS[Track].MaxValue, AQUA_TRACK_DEFINITIONS[Track].Step);
   AddGroup(OilGroupEnd, '', 1);
+  AddGroup(ShoreGroup, '海岸の寄せ返し', 1);
+  for Track := atShoreReach to atShoreFoamLife do
+    AddTrack(Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].Name,
+      Settings.Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].MinValue,
+      AQUA_TRACK_DEFINITIONS[Track].MaxValue, AQUA_TRACK_DEFINITIONS[Track].Step);
+  AddGroup(ShoreGroupEnd, '', 1);
 end;
 
 function ReadAquaFXSettings: TAquaSettings;

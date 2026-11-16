@@ -10,9 +10,10 @@ interface
 
 type
   TAquaDisplayMode = (adBackground, adImage, adEffectsOnly, adOilOverlay, adWaveOverlay);
-  TAquaShape = (asPlane, asRectangle, asEllipse, asImage);
+  TAquaShape = (asPlane, asRectangle, asEllipse, asImage, asShore);
   TAquaPreset = (apSea, apCoast, apRiver, apPond, apLake, apPuddle,
-    apBath, apPool, apRamen, apMiso, apMilk, apCoffee, apOil, apMagic, apVortex, apDropRipples);
+    apBath, apPool, apRamen, apMiso, apMilk, apCoffee, apOil, apMagic, apVortex,
+    apDropRipples, apShore);
   TAquaTrack = (atWaveStrength, atWaveSpeed, atWaveDetail,
     atFlowDirection, atFlowSpeed, atRippleAmount, atRippleSize,
     atRippleSpeed, atViscosity, atReflection, atHighlight, atFoam,
@@ -21,7 +22,8 @@ type
     atRotateX, atRotateY, atRotateZ, atZoom, atAspect, atTransparency,
     atOilAmount, atOilSize, atOilGloss,
     atVortexStrength, atVortexSpeed, atVortexRadius, atImageShading,
-    atRippleScatter, atRippleAspect);
+    atRippleScatter, atRippleAspect,
+    atShoreReach, atShorePeriod, atShoreRoughness, atShoreWaterOpacity, atShoreFoamLife);
 
   TAquaTrackDefinition = record
     Name: PWideChar;
@@ -42,11 +44,12 @@ const
   AQUA_PRESET_COUNT = Ord(High(TAquaPreset)) + 1;
   AQUA_PRESET_NAMES: array[TAquaPreset] of PWideChar = (
     '海', '海岸', '川', '池', '湖', '水たまり', 'お風呂', 'プール',
-    'ラーメンスープ', '味噌汁', '牛乳', 'コーヒー', '油', '魔法液体', '渦', '落水の波紋');
+    'ラーメンスープ', '味噌汁', '牛乳', 'コーヒー', '油', '魔法液体', '渦', '落水の波紋',
+    '海岸の寄せ返し');
   AQUA_DISPLAY_NAMES: array[TAquaDisplayMode] of PWideChar = (
     '背景あり', 'ユーザー画像', '背景なし', '画像に油膜', '画像に波');
   AQUA_SHAPE_NAMES: array[TAquaShape] of PWideChar = (
-    '平面', '長方形', '円形・楕円形', '画像形状');
+    '平面', '長方形', '円形・楕円形', '画像形状', '海岸');
 
   AQUA_TRACK_DEFINITIONS: array[TAquaTrack] of TAquaTrackDefinition = (
     (Name: '波の強さ'; MinValue: 0; MaxValue: 100; Step: 1),
@@ -85,7 +88,12 @@ const
     (Name: '渦の広がり'; MinValue: 1; MaxValue: 100; Step: 1),
     (Name: '画像の陰影'; MinValue: 0; MaxValue: 100; Step: 1),
     (Name: '波紋の散らばり'; MinValue: 0; MaxValue: 100; Step: 1),
-    (Name: '波紋の縦横比'; MinValue: -200; MaxValue: 200; Step: 1));
+    (Name: '波紋の縦横比'; MinValue: -200; MaxValue: 200; Step: 1),
+    (Name: '波の到達幅'; MinValue: 0; MaxValue: 100; Step: 1),
+    (Name: '寄せ返しの周期'; MinValue: 0.5; MaxValue: 30; Step: 0.01),
+    (Name: '水際の不規則さ'; MinValue: 0; MaxValue: 100; Step: 1),
+    (Name: '海水の不透明度'; MinValue: 0; MaxValue: 100; Step: 1),
+    (Name: '泡の残り'; MinValue: 0; MaxValue: 100; Step: 1));
 
 // プリセットを何度適用しても、同じ基準値を返す。
 // 戻り値は独立した設定値で、ホスト項目や現在の保存設定は変更しない。
@@ -143,6 +151,11 @@ begin
   Result.Tracks[atVortexRadius] := 70;
   Result.Tracks[atImageShading] := 100;
   Result.Tracks[atRippleScatter] := 100;
+  Result.Tracks[atShoreReach] := 55;
+  Result.Tracks[atShorePeriod] := 6;
+  Result.Tracks[atShoreRoughness] := 50;
+  Result.Tracks[atShoreWaterOpacity] := 85;
+  Result.Tracks[atShoreFoamLife] := 70;
 
   // 器の液体は楕円・俯瞰を基準にする。
   if Preset in [apRamen, apMiso, apMilk, apCoffee, apOil, apMagic] then
@@ -350,6 +363,21 @@ begin
         Result.Tracks[atReflection] := 55;
         Result.Tracks[atHighlight] := 80;
         Result.Tracks[atFoam] := 0;
+        Result.Tracks[atTilt] := 0;
+        Result.Tracks[atPerspective] := 0;
+      end;
+    apShore:
+      begin
+        Result.Shape := asShore;
+        Result.ColorRGB := $238B9D;
+        Result.Tracks[atWaveStrength] := 16;
+        Result.Tracks[atWaveSpeed] := 0.5;
+        Result.Tracks[atWaveDetail] := 40;
+        Result.Tracks[atFlowSpeed] := 8;
+        Result.Tracks[atRippleAmount] := 0;
+        Result.Tracks[atReflection] := 35;
+        Result.Tracks[atHighlight] := 30;
+        Result.Tracks[atFoam] := 90;
         Result.Tracks[atTilt] := 0;
         Result.Tracks[atPerspective] := 0;
       end;

@@ -16,6 +16,7 @@ uses
   AquaFX_OilSurface in '..\Source\Common\AquaFX_OilSurface.pas',
   AquaFX_Projection in '..\Source\Common\AquaFX_Projection.pas',
   AquaFX_Flow in '..\Source\Common\AquaFX_Flow.pas',
+  AquaFX_Shore in '..\Source\Common\AquaFX_Shore.pas',
   AquaFX_Renderer in '..\Source\Common\AquaFX_Renderer.pas';
 
 type
@@ -592,6 +593,172 @@ begin
   Writeln('PASS native waves/vortex: cup bounds, alpha, disable, animation, signed rotation, seek and presets');
 end;
 
+// 同じ本番AUF2で水際の生成・保存項目・無効化・入力アルファを確認する。
+procedure VerifyNativeShore(Table: PFILTER_PLUGIN_TABLE; var Video: TFILTER_PROC_VIDEO);
+var
+  Edit: TEDIT_SECTION;
+  Track: TAquaTrack;
+  A, B: TAquaPixels;
+  I, Visible, Transparent: Integer;
+  X, Y, Area, BeforeY: Double;
+
+  procedure Number(const Name: string; Value: Double);
+  begin
+    PFILTER_ITEM_TRACK(FindItem(Table, Name, 'track'))^.Value := Value;
+  end;
+
+  procedure Preset(Value: TAquaPreset);
+  begin
+    PFILTER_ITEM_SELECT(FindItem(Table, 'プリセット', 'select'))^.Value := Ord(Value);
+    PFILTER_ITEM_BUTTON(FindItem(Table, '設定', 'button'))^.Callback2(
+      @Edit, Pointer(1234), '水面演出:2', '設定');
+  end;
+
+  procedure Frame(Time: Double);
+  begin
+    Video.Object_^.Time := Time; SetCount := 0;
+    Check(Table^.Func_Proc_Video(@Video) = 1, 'Shore native callback');
+    Check((SetCount = 1) and (Length(Captured) = 204 * 204), 'Shore frame size');
+  end;
+
+begin
+  Edit := Default(TEDIT_SECTION); Edit.SetObjectItemValue := AcceptItem;
+  for Track := atX to atTransparency do Number(string(AQUA_TRACK_DEFINITIONS[Track].Name), 0);
+  Number('拡大率', 100); Number('シード', 1);
+  Video.Object_^.Flag := OBJECT_FLAG_FILTER_OBJECT;
+  Video.Object_^.Width := 204; Video.Object_^.Height := 204;
+  PFILTER_ITEM_SELECT(FindItem(Table, '表示モード', 'select'))^.Value := Ord(adBackground);
+  Preset(apShore);
+  Check(PFILTER_ITEM_SELECT(FindItem(Table, '水面形状', 'select'))^.Value = Ord(asShore),
+    'Shore preset did not select shoreline shape');
+  SetLength(HostInput, 204 * 204);
+  FillChar(HostInput[0], Length(HostInput) * SizeOf(TPIXEL_RGBA), 0);
+  Frame(1.25); A := Copy(Captured);
+  Visible := 0; Transparent := 0;
+  for I := 0 to High(A) do
+  begin
+    if A[I].A = 0 then
+    begin
+      Inc(Transparent);
+      Check((A[I].R = 0) and (A[I].G = 0) and (A[I].B = 0), 'Shore invisible RGB');
+    end else Inc(Visible);
+  end;
+  Check((Visible > 204) and (Transparent > 204), 'Shore must have sea and transparent beach');
+  Check((A[102].A > 150) and (A[203 * 204 + 102].A = 0), 'Shore orientation');
+  Frame(2.15); Check(not Same(A, Captured), 'Shore run-up did not animate');
+  Frame(1.25); Check(Same(A, Captured), 'Shore reverse seek changed pixels');
+  Frame(-0.5); Frame(1.25); Check(Same(A, Captured), 'Shore negative seek changed pixels');
+  Number('シード', 113); Frame(1.25); Check(not Same(A, Captured), 'Shore seed has no effect');
+  Number('シード', 1);
+  Number('Z軸回転', 90); Frame(1.25); B := Copy(Captured);
+  Check(not Same(A, B), 'Shore rotation has no effect');
+  Frame(2.15); Frame(1.25); Check(Same(B, Captured), 'Rotated shore cache changed on seek');
+  Number('Z軸回転', 0);
+  Number('波の到達幅', 0); Frame(1.25); Check(not Same(A, Captured), 'Shore reach has no effect');
+  Preset(apShore); Number('寄せ返しの周期', 3); Frame(1.25);
+  Check(not Same(A, Captured), 'Shore period has no effect');
+  Preset(apShore); Number('水際の不規則さ', 0); Frame(1.25);
+  Check(not Same(A, Captured), 'Shore roughness has no effect');
+  Preset(apShore); Frame(3.2); B := Copy(Captured);
+  Number('泡の残り', 0); Frame(3.2); Check(not Same(B, Captured), 'Shore foam persistence has no effect');
+  Preset(apShore); Number('海水の不透明度', 0); Frame(1.25); B := Copy(Captured);
+  Visible := 0;
+  for I := 0 to High(B) do if B[I].A > 0 then Inc(Visible);
+  Check((Visible > 0) and (Visible < 204 * 70), 'Shore foam-only coverage');
+  Number('泡の量', 0); Frame(1.25);
+  for I := 0 to High(Captured) do Check(Captured[I].A = 0, 'Disabled sea and foam left pixels');
+  Preset(apShore); Frame(1.25); Area := AlphaCenter(Captured, 204, X, BeforeY);
+  Check(Area > 0, 'Shore alpha center was empty');
+  Number('Y', 30); Frame(1.25); Area := AlphaCenter(Captured, 204, X, Y);
+  Check((Area > 0) and (Y > BeforeY + 5), 'Shore placement did not move');
+  Number('Y', 0); Number('透明度', 100); Frame(1.25);
+  for I := 0 to High(Captured) do Check(Captured[I].A = 0, 'Shore transparency');
+  Number('透明度', 0); Number('拡大率', 0); Frame(1.25);
+  for I := 0 to High(Captured) do Check(Captured[I].A = 0, 'Shore zero zoom');
+  Number('拡大率', 100);
+  Video.Object_^.Flag := 0;
+  for I := 0 to High(HostInput) do
+    if (I mod 204) >= 102 then HostInput[I].A := 128;
+  Frame(1.25);
+  for I := 0 to High(Captured) do
+    Check(Captured[I].A <= HostInput[I].A, 'Shore exceeded input alpha');
+  Video.Object_^.Flag := OBJECT_FLAG_FILTER_OBJECT;
+  PFILTER_ITEM_SELECT(FindItem(Table, '表示モード', 'select'))^.Value := Ord(adEffectsOnly);
+  Frame(1.25); B := Copy(Captured);
+  PFILTER_ITEM_SELECT(FindItem(Table, '表示モード', 'select'))^.Value := Ord(adBackground);
+  Number('海水の不透明度', 0); Frame(1.25);
+  Check(Same(B, Captured), 'Shore effects-only differs from isolated foam');
+  Preset(apSea);
+  Check(PFILTER_ITEM_SELECT(FindItem(Table, '水面形状', 'select'))^.Value = Ord(asPlane),
+    'Leaving shoreline preset did not restore the original shape');
+  Writeln('PASS native shore: standalone alpha, reach, period, roughness, foam, seed, seek, placement and disable');
+end;
+
+// 岸ごとの折返し時刻をまたいでも、広い泡が一度に現れないことを確認する。
+procedure VerifyShoreRetreatContinuity;
+const
+  Periods: array[0..2] of Double = (0.5, 6, 30);
+  Roughness: array[0..2] of Double = (0, 50, 100);
+  Edge = 3 / 432;
+var
+  Settings, WithoutTrail: TAquaSettings;
+  Field, Earlier, Later, NoTrail: TAquaShore;
+  Column, BeforeColumn, AfterColumn: TAquaShoreColumn;
+  A, B, C: TAquaShoreSample;
+  I, J, K, N: Integer;
+  U, V, Offset, TurnTime, MaxJump, MaxOffshoreTrail, Peak: Double;
+begin
+  MaxJump := 0; MaxOffshoreTrail := 0;
+  for I := 0 to High(Periods) do
+    for J := 0 to High(Roughness) do
+    begin
+      Settings := AquaPresetSettings(apShore);
+      Settings.Tracks[atShorePeriod] := Periods[I];
+      Settings.Tracks[atShoreRoughness] := Roughness[J];
+      Settings.Tracks[atShoreFoamLife] := 100;
+      for K := -16 to 16 do
+      begin
+        U := K * 0.12;
+        Field := TAquaShore.Create(Settings, 0);
+        Column := Field.PrepareColumn(U);
+        Offset := Column.Phase;
+        if Offset > 0.5 then Offset := Offset - 1;
+        TurnTime := (0.36 - Offset) * Periods[I];
+        Earlier := TAquaShore.Create(Settings, TurnTime - Periods[I] * 1E-6);
+        Later := TAquaShore.Create(Settings, TurnTime + Periods[I] * 1E-6);
+        BeforeColumn := Earlier.PrepareColumn(U); AfterColumn := Later.PrepareColumn(U);
+        for N := 0 to 47 do
+        begin
+          V := BeforeColumn.Front - 0.5 + N * 0.012;
+          A := Earlier.Sample(U, V, Edge, BeforeColumn);
+          B := Later.Sample(U, V, Edge, AfterColumn);
+          MaxJump := Max(MaxJump, Abs(A.Foam - B.Foam));
+          MaxJump := Max(MaxJump, Abs(A.Wet - B.Wet));
+        end;
+        Check(MaxJump < 0.002, Format('Shore foam popped at turnaround: %.6f', [MaxJump], TFormatSettings.Invariant));
+        Field := TAquaShore.Create(Settings, TurnTime);
+        Column := Field.PrepareColumn(U); Peak := Column.Peak;
+        Later := TAquaShore.Create(Settings, TurnTime + Periods[I] * 0.10);
+        AfterColumn := Later.PrepareColumn(U);
+        // 残る泡は水が離れた砂浜側だけ。沖に広い泡の面を突然追加しない。
+        WithoutTrail := Settings; WithoutTrail.Tracks[atShoreFoamLife] := 0;
+        NoTrail := TAquaShore.Create(WithoutTrail, TurnTime + Periods[I] * 0.10);
+        for N := 0 to 31 do
+        begin
+          V := AfterColumn.Front - 0.10 - N * 0.012;
+          B := Later.Sample(U, V, Edge, AfterColumn);
+          C := NoTrail.Sample(U, V, Edge, AfterColumn);
+          MaxOffshoreTrail := Max(MaxOffshoreTrail, Abs(B.Foam - C.Foam));
+          MaxOffshoreTrail := Max(MaxOffshoreTrail, B.Wet);
+        end;
+        Check(SameValue(Peak, AfterColumn.Peak, 1E-12), 'Shore maximum reach moved during retreat');
+        Check(SameValue(Column.Front, Peak, 1E-12), 'Shore maximum reach differs from turning edge');
+      end;
+    end;
+  Check(MaxOffshoreTrail < 1E-12, 'Shore residual foam appeared offshore');
+  Writeln('PASS shore retreat: continuous turnaround, fixed maximum reach and no offshore foam slab; max jump ', MaxJump:0:6);
+end;
+
 procedure VerifyPlugin(const Path: string);
 var
   Module: HMODULE;
@@ -679,6 +846,7 @@ begin
       VerifyNativeOil(Table, Video);
       VerifyNativeOilOverlay(Table, Video);
       VerifyNativeWavesAndVortex(Table, Video);
+      VerifyNativeShore(Table, Video);
       Video.Object_ := nil;
       Check(Table^.Func_Proc_Video(@Video) = 1, 'Invalid callback handling');
     finally
@@ -747,6 +915,64 @@ begin
     FreeLibrary(Module);
   end;
   Writeln('Exported ', AQUA_PRESET_COUNT, ' native preset previews: ', ImageDirectory);
+end;
+
+// 本番AUF2から1周期の透過PNGを出す。砂浜との合成は検査スクリプト側で行う。
+procedure ExportNativeShore(const Path: string);
+var
+  Module: HMODULE;
+  Initialize: TInitialize;
+  Uninitialize: TUninitialize;
+  GetTable: TGetTable;
+  Table: PFILTER_PLUGIN_TABLE;
+  Scene: TSCENE_INFO;
+  Obj: TOBJECT_INFO;
+  Video: TFILTER_PROC_VIDEO;
+  Edit: TEDIT_SECTION;
+  I: Integer;
+  Timer: TStopwatch;
+  Samples: TStringList;
+begin
+  Module := LoadLibrary(PChar(Path));
+  Check(Module <> 0, 'Shore preview LoadLibrary');
+  Samples := TStringList.Create;
+  try
+    @Initialize := GetProcAddress(Module, 'InitializePlugin');
+    @Uninitialize := GetProcAddress(Module, 'UninitializePlugin');
+    @GetTable := GetProcAddress(Module, 'GetFilterPluginTable');
+    Check(Initialize(2011700) = 1, 'Shore preview initialize');
+    Table := GetTable;
+    Scene := Default(TSCENE_INFO); Scene.Width := 768; Scene.Height := 432;
+    Obj := Default(TOBJECT_INFO); Obj.Flag := OBJECT_FLAG_FILTER_OBJECT;
+    Video := Default(TFILTER_PROC_VIDEO); Video.Scene := @Scene; Video.Object_ := @Obj;
+    Video.SetImageData := SetImage; Video.UserData := Table^.Func_Create(200);
+    Check(Video.UserData <> nil, 'Shore preview session');
+    try
+      Edit := Default(TEDIT_SECTION); Edit.SetObjectItemValue := AcceptItem;
+      PFILTER_ITEM_SELECT(FindItem(Table, 'プリセット', 'select'))^.Value := Ord(apShore);
+      PFILTER_ITEM_BUTTON(FindItem(Table, '設定', 'button'))^.Callback2(
+        @Edit, Pointer(1234), '水面演出:2', '設定');
+      Samples.Add('frame,time_seconds,render_ms');
+      for I := 0 to 71 do
+      begin
+        Obj.Time := I / 12;
+        SetCount := 0; Timer := TStopwatch.StartNew;
+        Check(Table^.Func_Proc_Video(@Video) = 1, 'Shore preview callback');
+        Timer.Stop;
+        Check((SetCount = 1) and (Length(Captured) = 768 * 432), 'Shore preview output');
+        Samples.Add(Format('%d,%.6f,%.3f', [I, Obj.Time, Timer.Elapsed.TotalMilliseconds],
+          TFormatSettings.Invariant));
+        SavePNG(Captured, 768, 432, Format('shore_%.3d.png', [I]));
+      end;
+      Samples.SaveToFile(ImageDirectory + 'render_times.csv', TEncoding.UTF8);
+    finally
+      Table^.Func_Destroy(200, Video.UserData);
+    end;
+    Uninitialize;
+  finally
+    Samples.Free; FreeLibrary(Module);
+  end;
+  Writeln('Exported 72 native shoreline frames: ', ImageDirectory);
 end;
 
 procedure VerifyOilRenderer;
@@ -1113,6 +1339,8 @@ begin
     ForceDirectories(ImageDirectory);
     if ParamStr(3) = '--benchmark' then
       BenchmarkPlugin(PluginPath, ParamStr(4))
+    else if ParamStr(3) = '--shore-preview' then
+      ExportNativeShore(PluginPath)
     else
     begin
       if ParamStr(3) <> '--previews-only' then
@@ -1120,6 +1348,7 @@ begin
         VerifyProjection;
         VerifyVortexFlow;
         VerifyDropRipples;
+        VerifyShoreRetreatContinuity;
         VerifyRenderer;
         VerifyOilRenderer;
         VerifyPlugin(PluginPath);

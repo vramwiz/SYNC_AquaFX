@@ -9,7 +9,8 @@
 interface
 
 uses
-  System.Threading, AviUtl2FilterTypes, AquaFX_Settings, AquaFX_OilSurface, AquaFX_Projection
+  System.Threading, AviUtl2FilterTypes, AquaFX_Settings, AquaFX_OilSurface, AquaFX_Projection,
+  AquaFX_Shore
   {$IFDEF DEBUG}, AquaFX_Profiling{$ENDIF};
 
 type
@@ -28,6 +29,8 @@ type
     // 画像・効果のみモードで使う油膜の格子。油膜なしでは確保・評価しない。
     FOilGrid: array of TAquaOilSample;
     FColumns: array of TAquaColumnSample;
+    // 水平な海岸では同じUの岸形状を列内で再利用する。内容は各フレームで失効する。
+    FShoreColumns: array of TAquaShoreColumn;
     FWavePool: TThreadPool;
     {$IFDEF DEBUG}
     FLastProfile: TAquaRenderProfile;
@@ -441,6 +444,8 @@ var
   Projection: TAquaProjection;
   OilSurface: TAquaOilSurface;
   FlowField: TAquaFlowField;
+  Shore: TAquaShore;
+  ShoreSample: TAquaShoreSample;
   OilSample, OilA, OilB: TAquaOilSample;
   Seed, T, Viscosity, Strength, Detail, Flow, FlowAngle: Double;
   RippleScaleX, RippleScaleY: Double;
@@ -493,6 +498,7 @@ begin
   end;
   if IsNan(Time) or IsInfinite(Time) then Time := 0;
   T := EnsureRange(Time, -1.0E9, 1.0E9);
+  if Settings.Shape = asShore then Shore := TAquaShore.Create(Settings, T);
   Seed := Settings.Tracks[atSeed];
   Viscosity := Settings.Tracks[atViscosity] * 0.01;
   Strength := Settings.Tracks[atWaveStrength] * 0.01;
@@ -563,6 +569,11 @@ begin
   GridH := Max(2, (Height + Step - 1) div Step);
   SetLength(FGrid, GridW * GridH);
   SetLength(FColumns, Width);
+  if Settings.Shape = asShore then
+  begin
+    SetLength(FShoreColumns, GridW);
+    for GX := 0 to GridW - 1 do FShoreColumns[GX].U := MaxDouble;
+  end;
   for X := 0 to Width - 1 do
   begin
     GridX := X * (GridW - 1) / Max(1, Width - 1);
@@ -598,6 +609,13 @@ begin
         Mask := Saturate((1 - Max(Abs(RotU), Abs(RotV))) / Edge + 0.5)
       else if Settings.Shape = asEllipse then
         Mask := Saturate((1 - Sqrt(Sqr(RotU) + Sqr(RotV))) / Edge + 0.5);
+      if Settings.Shape = asShore then
+      begin
+        if FShoreColumns[GX].U <> RotU then
+          FShoreColumns[GX] := Shore.PrepareColumn(RotU);
+        ShoreSample := Shore.Sample(RotU, RotV, Edge, FShoreColumns[GX]);
+        Mask := ShoreSample.Coverage;
+      end;
       if Mask > 0 then
       begin
         // 形状で波の倍率を変えず、「魔法液体」と同じ基準で模様を生成する。
@@ -650,6 +668,7 @@ begin
         Fresnel := 0.08 + Sqr(1 - Depth) * 0.5;
         Ref := Reflection * Fresnel * (0.4 + 0.6 * Sky);
         Foam := Saturate((WaveHeight * 1.6 + (1 - NormalZ) * 0.8 - 0.3) * 2) * FoamAmount;
+        if Settings.Shape = asShore then Foam := 0;
         Shade := 0.55 + Diffuse * 0.55 + WaveHeight * 0.12;
         Light := Saturate(Specular + Foam * 0.9);
         S.R := Saturate(Lerp(BaseR * Shade, 0.62, Ref) + Light);
@@ -668,6 +687,9 @@ begin
           S.G := Lerp(S.G, OilSample.G, OilSample.Alpha);
           S.B := Lerp(S.B, OilSample.B, OilSample.Alpha);
         end;
+        if Settings.Shape = asShore then
+          ShoreSample.Composite(S.R, S.G, S.B, S.Mask, S.Light,
+            Settings.DisplayMode = adEffectsOnly);
       end;
       FGrid[GY * GridW + GX] := S;
     end;
@@ -747,6 +769,10 @@ begin
           Pixel.R := ColorByte((220 / 255 * S.Light * (1 - OilSample.Alpha) + OilSample.R * OilSample.Alpha) / OverlayAlpha);
           Pixel.G := ColorByte((240 / 255 * S.Light * (1 - OilSample.Alpha) + OilSample.G * OilSample.Alpha) / OverlayAlpha);
           Pixel.B := ColorByte((S.Light * (1 - OilSample.Alpha) + OilSample.B * OilSample.Alpha) / OverlayAlpha);
+        end;
+        if Settings.Shape = asShore then
+        begin
+          Pixel.R := ColorByte(S.R); Pixel.G := ColorByte(S.G); Pixel.B := ColorByte(S.B);
         end;
       end else if Settings.DisplayMode = adImage then
       begin

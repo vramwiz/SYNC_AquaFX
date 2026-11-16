@@ -2,6 +2,7 @@
     [string]$PluginPath = 'C:\ProgramData\aviutl2\Plugin\SYNC_AquaFX\SYNC_AquaFX.auf2',
     [string]$ImageDirectory,
     [switch]$PreviewsOnly,
+    [switch]$ShorePreview,
     [switch]$Benchmark,
     [string]$BenchmarkImage = (Join-Path $PSScriptRoot '..\Sample\ramen.png'),
     [string]$BenchmarkCase,
@@ -28,6 +29,7 @@ try {
     $testArguments = @($PluginPath, $ImageDirectory)
     if ($Benchmark) { $testArguments += @('--benchmark', $BenchmarkImage) }
     elseif ($PreviewsOnly) { $testArguments += '--previews-only' }
+    elseif ($ShorePreview) { $testArguments += '--shore-preview' }
     if ($Benchmark -and $BenchmarkCase) { $testArguments += $BenchmarkCase }
     if ($Benchmark -and $BenchmarkAlias) {
         if (-not $BenchmarkCase) { throw 'BenchmarkAlias requires BenchmarkCase.' }
