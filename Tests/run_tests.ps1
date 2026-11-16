@@ -3,6 +3,7 @@
     [string]$ImageDirectory,
     [switch]$PreviewsOnly,
     [switch]$ShorePreview,
+    [switch]$DrainPreview,
     [switch]$Benchmark,
     [string]$BenchmarkImage = (Join-Path $PSScriptRoot '..\Sample\ramen.png'),
     [string]$BenchmarkCase,
@@ -30,6 +31,7 @@ try {
     if ($Benchmark) { $testArguments += @('--benchmark', $BenchmarkImage) }
     elseif ($PreviewsOnly) { $testArguments += '--previews-only' }
     elseif ($ShorePreview) { $testArguments += '--shore-preview' }
+    elseif ($DrainPreview) { $testArguments += '--drain-preview' }
     if ($Benchmark -and $BenchmarkCase) { $testArguments += $BenchmarkCase }
     if ($Benchmark -and $BenchmarkAlias) {
         if (-not $BenchmarkCase) { throw 'BenchmarkAlias requires BenchmarkCase.' }

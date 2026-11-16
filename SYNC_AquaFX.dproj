@@ -95,6 +95,7 @@
         <DCCReference Include="Source\Common\AquaFX_OilSurface.pas"/>
         <DCCReference Include="Source\Common\AquaFX_Projection.pas"/>
         <DCCReference Include="Source\Common\AquaFX_Flow.pas"/>
+        <DCCReference Include="Source\Common\AquaFX_VortexSurface.pas"/>
         <DCCReference Include="Source\Common\AquaFX_Shore.pas"/>
         <DCCReference Include="Source\Common\AquaFX_Profiling.pas"/>
         <DCCReference Include="Source\Common\AquaFX_Renderer.pas"/>

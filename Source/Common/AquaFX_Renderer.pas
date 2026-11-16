@@ -10,7 +10,7 @@ interface
 
 uses
   System.Threading, AviUtl2FilterTypes, AquaFX_Settings, AquaFX_OilSurface, AquaFX_Projection,
-  AquaFX_Shore
+  AquaFX_Shore, AquaFX_VortexSurface
   {$IFDEF DEBUG}, AquaFX_Profiling{$ENDIF};
 
 type
@@ -58,9 +58,10 @@ type
     // Outputは呼出側所有の配列を指定サイズへ更新する。Inputや保存設定は変更しない。
     // ClipToInput=Trueでは投影後の入力アルファ内だけへ描き、無効サイズではOutputを空にする。
     // 「画像に油膜」は入力を移動せず油だけ合成する。透明度は油だけへ適用する。
+    // TimelineProgressはオブジェクト先頭0～最終フレーム1。排水だけに使用する。
     procedure Render(const Input: TAquaPixels; Width, Height: Integer;
       Time: Double; const Settings: TAquaSettings; ClipToInput: Boolean;
-      var Output: TAquaPixels);
+      var Output: TAquaPixels; TimelineProgress: Double = 0);
   end;
 
 const
@@ -431,7 +432,7 @@ end;
 
 procedure TAquaRenderer.Render(const Input: TAquaPixels; Width, Height: Integer;
   Time: Double; const Settings: TAquaSettings; ClipToInput: Boolean;
-  var Output: TAquaPixels);
+  var Output: TAquaPixels; TimelineProgress: Double);
 type
   TWave = record KX, KY, Phase, Amplitude: Double; end;
   TRipple = record X, Y, Radius, Width, Strength, MinD2, MaxD2: Double; end;
@@ -441,11 +442,15 @@ var
   GridW, GridH, Step, GX, GY, X, Y, Index, I, RippleCount: Integer;
   IX, IY, NX, NY, BaseIndex: Integer;
   HasInput, NeedsInputMask, HasOil, KeepOilGrid, IsOilOverlay, IsWaveOverlay, IsOverlay, HasVortex: Boolean;
+  HasVortexSurface: Boolean;
   Projection: TAquaProjection;
   OilSurface: TAquaOilSurface;
   FlowField: TAquaFlowField;
   Shore: TAquaShore;
   ShoreSample: TAquaShoreSample;
+  VortexSurface: TAquaVortexSurface;
+  VortexSample: TAquaVortexSample;
+  VortexCU, VortexCV, MetricX, MetricY, OriginX, OriginY, PointX, PointY, MetricBase: Double;
   OilSample, OilA, OilB: TAquaOilSample;
   Seed, T, Viscosity, Strength, Detail, Flow, FlowAngle: Double;
   RippleScaleX, RippleScaleY: Double;
@@ -498,6 +503,35 @@ begin
   end;
   if IsNan(Time) or IsInfinite(Time) then Time := 0;
   T := EnsureRange(Time, -1.0E9, 1.0E9);
+  HasVortexSurface := (Settings.Tracks[atVortexDepth] > 0) or
+    (Settings.Tracks[atVortexPull] > 0) or (Settings.Tracks[atDrainAmount] > 0);
+  VortexCU := 0; VortexCV := 0; MetricX := 1; MetricY := 1;
+  if HasVortexSurface or (Settings.Tracks[atVortexCenterX] <> 0) or
+    (Settings.Tracks[atVortexCenterY] <> 0) then
+  begin
+    Projection.ScreenToSurface(Width * 0.5 + Settings.Tracks[atVortexCenterX],
+      Height * 0.5 + Settings.Tracks[atVortexCenterY], VortexCU, VortexCV);
+    if Projection.SurfaceToScreen(VortexCU, VortexCV, OriginX, OriginY) then
+    begin
+      if Projection.SurfaceToScreen(VortexCU + 1, VortexCV, PointX, PointY) then
+        MetricX := Max(0.01, Hypot(PointX - OriginX, PointY - OriginY));
+      if Projection.SurfaceToScreen(VortexCU, VortexCV + 1, PointX, PointY) then
+        MetricY := Max(0.01, Hypot(PointX - OriginX, PointY - OriginY));
+      MetricBase := Min(MetricX, MetricY); MetricX := MetricX / MetricBase; MetricY := MetricY / MetricBase;
+    end;
+  end;
+  if HasVortexSurface then
+  begin
+    if IsNan(TimelineProgress) or IsInfinite(TimelineProgress) then TimelineProgress := 0;
+    VortexSurface := TAquaVortexSurface.Create(Settings, T, TimelineProgress,
+      VortexCU, VortexCV, MetricX, MetricY);
+    if VortexSurface.Empty then
+    begin
+      if IsOverlay then Move(Input[0], Output[0], Length(Output) * SizeOf(TPIXEL_RGBA))
+      else FillChar(Output[0], Length(Output) * SizeOf(TPIXEL_RGBA), 0);
+      Exit;
+    end;
+  end;
   if Settings.Shape = asShore then Shore := TAquaShore.Create(Settings, T);
   Seed := Settings.Tracks[atSeed];
   Viscosity := Settings.Tracks[atViscosity] * 0.01;
@@ -508,7 +542,7 @@ begin
   FlowAngle := DegToRad(Settings.Tracks[atFlowDirection]);
   OffsetU := T * Flow * Cos(FlowAngle);
   OffsetV := T * Flow * Sin(FlowAngle);
-  FlowField := TAquaFlowField.Create(Settings, T);
+  FlowField := TAquaFlowField.Create(Settings, T, VortexCU, VortexCV);
   HasVortex := FlowField.Active;
   HasOil := Settings.Tracks[atOilAmount] > 0;
   KeepOilGrid := HasOil and (Settings.DisplayMode <> adBackground);
@@ -616,11 +650,21 @@ begin
         ShoreSample := Shore.Sample(RotU, RotV, Edge, FShoreColumns[GX]);
         Mask := ShoreSample.Coverage;
       end;
+      if HasVortexSurface and (Mask > 0) then
+      begin
+        VortexSample := VortexSurface.Sample(RotU, RotV, Edge);
+        Mask := Mask * VortexSample.Mask;
+      end;
       if Mask > 0 then
       begin
         // 形状で波の倍率を変えず、「魔法液体」と同じ基準で模様を生成する。
         FlowU := RotU; FlowV := RotV;
-        if HasVortex then FlowField.Map(RotU, RotV, FlowU, FlowV, J00, J01, J10, J11);
+        if HasVortexSurface then VortexSurface.Advect(FlowU, FlowV);
+        if HasVortex then
+        begin
+          U := FlowU; V := FlowV;
+          FlowField.Map(U, V, FlowU, FlowV, J00, J01, J10, J11);
+        end;
         U := FlowU - OffsetU; V := FlowV - OffsetV;
         WaveHeight := 0; GradU := 0; GradV := 0;
         if Strength > 0 then for I := 0 to High(Waves) do
@@ -657,6 +701,11 @@ begin
             GradV := GradV + CosPhase * DY / Distance * RippleScaleY;
           end;
         end;
+        if HasVortexSurface then
+        begin
+          WaveHeight := WaveHeight + VortexSample.Height;
+          GradU := GradU + VortexSample.GradU; GradV := GradV + VortexSample.GradV;
+        end;
         InvNormal := 1 / Sqrt(1 + GradU * GradU + GradV * GradV);
         NormalX := -GradU * InvNormal; NormalY := -GradV * InvNormal;
         NormalZ := InvNormal;
@@ -669,14 +718,25 @@ begin
         Ref := Reflection * Fresnel * (0.4 + 0.6 * Sky);
         Foam := Saturate((WaveHeight * 1.6 + (1 - NormalZ) * 0.8 - 0.3) * 2) * FoamAmount;
         if Settings.Shape = asShore then Foam := 0;
+        if HasVortexSurface then Foam := Max(Foam, VortexSample.Foam);
         Shade := 0.55 + Diffuse * 0.55 + WaveHeight * 0.12;
         Light := Saturate(Specular + Foam * 0.9);
+        if HasVortexSurface then
+        begin
+          Shade := Shade * VortexSample.Shade;
+          Light := Saturate(Light + VortexSample.Light);
+        end;
         S.R := Saturate(Lerp(BaseR * Shade, 0.62, Ref) + Light);
         S.G := Saturate(Lerp(BaseG * Shade, 0.82, Ref) + Light);
         S.B := Saturate(Lerp(BaseB * Shade, 0.94, Ref) + Light);
         S.Mask := Mask;
         S.DX := GradU * 9 * Width / 1280;
         S.DY := GradV * 9 * Height / 720;
+        if HasVortexSurface then
+        begin
+          S.DX := S.DX + VortexSample.PullU * Width * 0.5;
+          S.DY := S.DY + VortexSample.PullV * Height * 0.5;
+        end;
         S.Shade := Shade;
         S.Light := Light;
         if HasOil then

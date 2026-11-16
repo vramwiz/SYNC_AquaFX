@@ -35,6 +35,7 @@ var
   OilGroup, OilGroupEnd: TFILTER_ITEM_GROUP;
   VortexGroup, VortexGroupEnd: TFILTER_ITEM_GROUP;
   ShoreGroup, ShoreGroupEnd: TFILTER_ITEM_GROUP;
+  DrainGroup, DrainGroupEnd: TFILTER_ITEM_GROUP;
 
 procedure ApplyPreset(Edit: PEDIT_SECTION; Obj: OBJECT_HANDLE;
   Effect, Item: PWideChar); cdecl;
@@ -75,7 +76,8 @@ begin
     for Track := Low(TAquaTrack) to High(TAquaTrack) do
     begin
       // 乱数の再現条件、表示モード、利用者の配置はプリセットで変更しない。
-      if (Track = atSeed) or (Track in AQUA_PLACEMENT_TRACKS) then Continue;
+      if (Track = atSeed) or (Track in AQUA_PLACEMENT_TRACKS) or
+        (Track in AQUA_VORTEX_PLACEMENT_TRACKS) then Continue;
       Text := UTF8String(FloatToStr(Preset.Tracks[Track], TFormatSettings.Invariant));
       SetItem(Tracks[Track].Name, Text);
       Tracks[Track].Value := Preset.Tracks[Track];
@@ -161,6 +163,13 @@ begin
       Settings.Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].MinValue,
       AQUA_TRACK_DEFINITIONS[Track].MaxValue, AQUA_TRACK_DEFINITIONS[Track].Step);
   AddGroup(ShoreGroupEnd, '', 1);
+  // 既存項目の登録順を維持し、新しい保存項目は末尾へ追加する。
+  AddGroup(DrainGroup, '渦の凹み・排水', 1);
+  for Track := atVortexCenterX to atDrainAmount do
+    AddTrack(Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].Name,
+      Settings.Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].MinValue,
+      AQUA_TRACK_DEFINITIONS[Track].MaxValue, AQUA_TRACK_DEFINITIONS[Track].Step);
+  AddGroup(DrainGroupEnd, '', 1);
 end;
 
 function ReadAquaFXSettings: TAquaSettings;

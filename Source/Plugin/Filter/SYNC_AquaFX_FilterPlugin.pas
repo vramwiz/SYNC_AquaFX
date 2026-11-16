@@ -20,7 +20,7 @@ implementation
 
 uses
   System.SysUtils, System.SyncObjs, Winapi.Windows,
-  PluginFilterTable, AquaFX_Parameters, AquaFX_Renderer, AquaFX_Settings
+  PluginFilterTable, AquaFX_Parameters, AquaFX_Renderer, AquaFX_Settings, AquaFX_VortexSurface
   {$IFDEF DEBUG}, AquaFX_Profiling{$ENDIF};
 
 const
@@ -95,7 +95,7 @@ begin
     Settings := ReadAquaFXSettings;
     {$IFDEF DEBUG}Profile.SettingsDone := AquaProfileTick;{$ENDIF}
     FRenderer.Render(FInput, Width, Height, Video^.Object_^.Time,
-      Settings, not FilterObject, FOutput);
+      Settings, not FilterObject, FOutput, AquaObjectProgress(Video^.Object_^));
     {$IFDEF DEBUG}
     Profile.RenderDone := AquaProfileTick;
     Profile.Renderer := FRenderer.LastProfile;

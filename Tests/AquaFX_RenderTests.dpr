@@ -16,6 +16,7 @@ uses
   AquaFX_OilSurface in '..\Source\Common\AquaFX_OilSurface.pas',
   AquaFX_Projection in '..\Source\Common\AquaFX_Projection.pas',
   AquaFX_Flow in '..\Source\Common\AquaFX_Flow.pas',
+  AquaFX_VortexSurface in '..\Source\Common\AquaFX_VortexSurface.pas',
   AquaFX_Shore in '..\Source\Common\AquaFX_Shore.pas',
   AquaFX_Renderer in '..\Source\Common\AquaFX_Renderer.pas';
 
@@ -488,6 +489,11 @@ begin
     SameValue((Y - V) / 0.000001, D, 1E-5), 'Vortex derivative V');
   Flow.Map(4, 3, U, V, A, B, C, D);
   Check((U = 4) and (V = 3), 'Vortex changed coordinates outside radius');
+  Flow := TAquaFlowField.Create(Settings, 2, 0.3, -0.2);
+  Flow.Map(0.3, -0.2, U, V, A, B, C, D);
+  Check(SameValue(U, 0.3) and SameValue(V, -0.2), 'Moved vortex center is not fixed');
+  Flow.Map(0.8, -0.2, U, V, A, B, C, D);
+  Check(SameValue(Sqr(U - 0.3) + Sqr(V + 0.2), 0.25, 1E-12), 'Moved vortex radius changed');
   Settings.Tracks[atVortexSpeed] := 0;
   Flow := TAquaFlowField.Create(Settings, 2);
   Check(not Flow.Active, 'Zero vortex speed remains active');
@@ -759,6 +765,95 @@ begin
   Writeln('PASS shore retreat: continuous turnaround, fixed maximum reach and no offshore foam slab; max jump ', MaxJump:0:6);
 end;
 
+procedure VerifyNativeDrain(Table: PFILTER_PLUGIN_TABLE; var Video: TFILTER_PROC_VIDEO);
+var
+  Edit: TEDIT_SECTION;
+  A, B: TAquaPixels;
+  Track: TAquaTrack;
+  I: Integer;
+  StartArea, MidArea, X, Y: Double;
+  Obj: TOBJECT_INFO;
+  Settings: TAquaSettings;
+  Surface: TAquaVortexSurface;
+  Core, Rim: TAquaVortexSample;
+
+  procedure Number(const Name: string; Value: Double);
+  begin PFILTER_ITEM_TRACK(FindItem(Table, Name, 'track'))^.Value := Value; end;
+  procedure Preset(Value: TAquaPreset);
+  begin
+    PFILTER_ITEM_SELECT(FindItem(Table, 'プリセット', 'select'))^.Value := Ord(Value);
+    PFILTER_ITEM_BUTTON(FindItem(Table, '設定', 'button'))^.Callback2(@Edit, Pointer(1234), '水面演出:2', '設定');
+  end;
+  procedure Frame(Index, Total: Integer);
+  begin
+    Video.Object_^.Frame := Index; Video.Object_^.FrameTotal := Total;
+    Video.Object_^.Time := Index / 30; Video.Object_^.TimeTotal := Total / 30;
+    Check(Table^.Func_Proc_Video(@Video) = 1, 'Native drain callback');
+  end;
+begin
+  Obj := Default(TOBJECT_INFO); Obj.FrameTotal := 301; Obj.Frame := 300;
+  Check(AquaObjectProgress(Obj) = 1, 'Drain did not finish on last frame');
+  Obj.Frame := -3; Check(AquaObjectProgress(Obj) = 0, 'Negative drain progress');
+  Settings := AquaPresetSettings(apVortex);
+  Surface := TAquaVortexSurface.Create(Settings, 1, 0.5, 0, 0, 1, 1);
+  Core := Surface.Sample(0, 0, 0.01); Rim := Surface.Sample(1.5, 0, 0.01);
+  Check((Core.Height < Rim.Height) and (Core.Shade < Rim.Shade), 'Vortex center is not depressed');
+  Core := Surface.Sample(0.2, 0.1, 0.01); Rim := Surface.Sample(0.200001, 0.1, 0.01);
+  Check(SameValue((Rim.Height - Core.Height) / 0.000001, Core.GradU, 1E-5), 'Funnel normal U');
+  Rim := Surface.Sample(0.2, 0.100001, 0.01);
+  Check(SameValue((Rim.Height - Core.Height) / 0.000001, Core.GradV, 1E-5), 'Funnel normal V');
+  for I := 0 to 31 do
+  begin
+    Core := Surface.Sample(0.10 + I * 0.02, 0.10, 0.01);
+    Check((Core.Light = 0) and (Core.Foam = 0), 'Vortex draws bright ripple-like spiral lines');
+  end;
+  Check((AquaPresetSettings(apVortex).Tracks[atFoam] = 0) and
+    (AquaPresetSettings(apDrain).Tracks[atFoam] = 0), 'Vortex/drain preset still adds foam');
+  Settings := AquaPresetSettings(apDrain);
+  Surface := TAquaVortexSurface.Create(Settings, 7.36, 0.92, 0.75, 0, 2.55, 1);
+  Core := Surface.Sample(0.68, 0, 3 / 432);
+  Check(Core.Mask > 0.99, 'Late drain globally fades instead of flowing into the outlet');
+  X := 0.4; Y := 0; Surface.Advect(X, Y);
+  Check((X < 0.4) and (Y = 0), 'Right outlet does not pull texture from upstream');
+  Surface := TAquaVortexSurface.Create(Settings, 7.36, 0.92, -0.75, 0, 2.55, 1);
+  X := -0.4; Y := 0; Surface.Advect(X, Y);
+  Check((X > -0.4) and (Y = 0), 'Left outlet does not reverse the incoming stream');
+  Surface := TAquaVortexSurface.Create(Settings, 2, 0.5, 0.75, 0, 2.55, 1);
+  X := 0.4; Y := 0; Surface.Advect(X, Y);
+  Check((X = 0.4) and (Y = 0), 'Transport changed the accepted early absorption');
+  Edit := Default(TEDIT_SECTION); Edit.SetObjectItemValue := AcceptItem;
+  for Track := atX to atTransparency do Number(string(AQUA_TRACK_DEFINITIONS[Track].Name), 0);
+  Number('拡大率', 100); Number('渦中心X', 0); Number('渦中心Y', 0);
+  Video.Object_^.Width := 204; Video.Object_^.Height := 204; Video.Object_^.Flag := OBJECT_FLAG_FILTER_OBJECT;
+  PFILTER_ITEM_SELECT(FindItem(Table, '表示モード', 'select'))^.Value := Ord(adBackground);
+  Preset(apDrain); Frame(0, 301); A := Copy(Captured);
+  StartArea := AlphaCenter(A, 204, X, Y); Frame(150, 301);
+  MidArea := AlphaCenter(Captured, 204, X, Y);
+  Check((MidArea > 0) and (MidArea < StartArea), 'Drain did not reduce the water');
+  Frame(300, 301); for I := 0 to High(Captured) do Check(Captured[I].A = 0, 'Drain water remains on last frame');
+  Frame(0, 301); Check(Same(A, Captured), 'Drain reverse seek changed start');
+  Number('渦の強さ', 0); Number('波の強さ', 0); Number('泡の量', 0);
+  Frame(270, 301); A := Copy(Captured); Frame(540, 601);
+  Check(Same(A, Captured), 'Drain duration does not follow timeline length');
+  Preset(apDrain); Number('排水の量', 0); Frame(300, 301);
+  Check(AlphaCenter(Captured, 204, X, Y) > 0, 'Disabled drain still removed the water');
+  Preset(apVortex); Frame(100, 301); A := Copy(Captured); Number('渦の凹み', 0); Frame(100, 301);
+  Check(not Same(A, Captured), 'Vortex depth has no visible effect');
+  Number('渦中心X', 35); Number('渦中心Y', 20); Preset(apDrain);
+  Check(PFILTER_ITEM_TRACK(FindItem(Table, '渦中心X', 'track'))^.Value = 35, 'Preset changed drain center');
+  Frame(150, 301); A := Copy(Captured); Number('渦中心X', -35); Frame(150, 301);
+  Check(not Same(A, Captured), 'Drain center position has no effect');
+  Number('渦中心X', 0); Number('渦中心Y', 0); Video.Object_^.Flag := 0;
+  SetLength(HostInput, 204 * 204); FillChar(HostInput[0], Length(HostInput) * SizeOf(TPIXEL_RGBA), 0);
+  for I := 204 * 102 to High(HostInput) do HostInput[I].A := 128;
+  Frame(100, 301);
+  for I := 0 to High(Captured) do Check(Captured[I].A <= HostInput[I].A, 'Drain exceeded source alpha');
+  Video.Object_^.Flag := OBJECT_FLAG_FILTER_OBJECT; Video.Object_^.FrameTotal := 0;
+  Video.Object_^.TimeTotal := 0; Preset(apSea);
+  B := Copy(Captured); Check(Length(B) = 204 * 204, 'Drain output size');
+  Writeln('PASS drain: depression, center, preserved placement, timeline duration, final empty, seek, zero and source alpha');
+end;
+
 procedure VerifyPlugin(const Path: string);
 var
   Module: HMODULE;
@@ -847,6 +942,7 @@ begin
       VerifyNativeOilOverlay(Table, Video);
       VerifyNativeWavesAndVortex(Table, Video);
       VerifyNativeShore(Table, Video);
+      VerifyNativeDrain(Table, Video);
       Video.Object_ := nil;
       Check(Table^.Func_Proc_Video(@Video) = 1, 'Invalid callback handling');
     finally
@@ -917,7 +1013,7 @@ begin
   Writeln('Exported ', AQUA_PRESET_COUNT, ' native preset previews: ', ImageDirectory);
 end;
 
-// 本番AUF2から1周期の透過PNGを出す。砂浜との合成は検査スクリプト側で行う。
+// 本番AUF2から海岸1周期または排水全長の透過PNGを出す。背景合成は検査スクリプト側。
 procedure ExportNativeShore(const Path: string);
 var
   Module: HMODULE;
@@ -929,7 +1025,9 @@ var
   Obj: TOBJECT_INFO;
   Video: TFILTER_PROC_VIDEO;
   Edit: TEDIT_SECTION;
-  I: Integer;
+  I, W, H, Count: Integer;
+  Drain: Boolean;
+  Prefix: string;
   Timer: TStopwatch;
   Samples: TStringList;
 begin
@@ -942,7 +1040,9 @@ begin
     @GetTable := GetProcAddress(Module, 'GetFilterPluginTable');
     Check(Initialize(2011700) = 1, 'Shore preview initialize');
     Table := GetTable;
-    Scene := Default(TSCENE_INFO); Scene.Width := 768; Scene.Height := 432;
+    Drain := ParamStr(3) = '--drain-preview'; W := 768; H := 432; Count := 72; Prefix := 'shore';
+    if Drain then begin H := 512; Count := 96; Prefix := 'bath_drain'; end;
+    Scene := Default(TSCENE_INFO); Scene.Width := W; Scene.Height := H; Scene.Rate := 30; Scene.Scale := 1;
     Obj := Default(TOBJECT_INFO); Obj.Flag := OBJECT_FLAG_FILTER_OBJECT;
     Video := Default(TFILTER_PROC_VIDEO); Video.Scene := @Scene; Video.Object_ := @Obj;
     Video.SetImageData := SetImage; Video.UserData := Table^.Func_Create(200);
@@ -952,17 +1052,32 @@ begin
       PFILTER_ITEM_SELECT(FindItem(Table, 'プリセット', 'select'))^.Value := Ord(apShore);
       PFILTER_ITEM_BUTTON(FindItem(Table, '設定', 'button'))^.Callback2(
         @Edit, Pointer(1234), '水面演出:2', '設定');
+      if Drain then
+      begin
+        PFILTER_ITEM_SELECT(FindItem(Table, 'プリセット', 'select'))^.Value := Ord(apDrain);
+        PFILTER_ITEM_BUTTON(FindItem(Table, '設定', 'button'))^.Callback2(@Edit, Pointer(1234), '水面演出:2', '設定');
+        Obj.Flag := 0; Obj.Width := W; Obj.Height := H; Obj.FrameTotal := 240; Obj.TimeTotal := 8;
+        Video.GetImageData := GetImage; SetLength(HostInput, W * H);
+        for I := 0 to High(HostInput) do HostInput[I].A := 255;
+        PFILTER_ITEM_TRACK(FindItem(Table, 'Y', 'track'))^.Value := -3.5;
+        PFILTER_ITEM_TRACK(FindItem(Table, '拡大率', 'track'))^.Value := 51;
+        PFILTER_ITEM_TRACK(FindItem(Table, '縦横比', 'track'))^.Value := 70;
+        PFILTER_ITEM_TRACK(FindItem(Table, '透明度', 'track'))^.Value := 35;
+        PFILTER_ITEM_TRACK(FindItem(Table, '渦中心X', 'track'))^.Value := 261;
+        PFILTER_ITEM_TRACK(FindItem(Table, '渦中心Y', 'track'))^.Value := -0.5;
+      end;
       Samples.Add('frame,time_seconds,render_ms');
-      for I := 0 to 71 do
+      for I := 0 to Count - 1 do
       begin
         Obj.Time := I / 12;
+        if Drain then begin Obj.Frame := Round(I * 239 / (Count - 1)); Obj.Time := Obj.Frame / 30; end;
         SetCount := 0; Timer := TStopwatch.StartNew;
         Check(Table^.Func_Proc_Video(@Video) = 1, 'Shore preview callback');
         Timer.Stop;
-        Check((SetCount = 1) and (Length(Captured) = 768 * 432), 'Shore preview output');
+        Check((SetCount = 1) and (Length(Captured) = W * H), 'Shore preview output');
         Samples.Add(Format('%d,%.6f,%.3f', [I, Obj.Time, Timer.Elapsed.TotalMilliseconds],
           TFormatSettings.Invariant));
-        SavePNG(Captured, 768, 432, Format('shore_%.3d.png', [I]));
+        SavePNG(Captured, W, H, Format('%s_%.3d.png', [Prefix, I]));
       end;
       Samples.SaveToFile(ImageDirectory + 'render_times.csv', TEncoding.UTF8);
     finally
@@ -972,7 +1087,7 @@ begin
   finally
     Samples.Free; FreeLibrary(Module);
   end;
-  Writeln('Exported 72 native shoreline frames: ', ImageDirectory);
+  Writeln('Exported ', Count, ' native ', Prefix, ' frames: ', ImageDirectory);
 end;
 
 procedure VerifyOilRenderer;
@@ -1339,7 +1454,7 @@ begin
     ForceDirectories(ImageDirectory);
     if ParamStr(3) = '--benchmark' then
       BenchmarkPlugin(PluginPath, ParamStr(4))
-    else if ParamStr(3) = '--shore-preview' then
+    else if (ParamStr(3) = '--shore-preview') or (ParamStr(3) = '--drain-preview') then
       ExportNativeShore(PluginPath)
     else
     begin

@@ -13,7 +13,7 @@ type
   TAquaShape = (asPlane, asRectangle, asEllipse, asImage, asShore);
   TAquaPreset = (apSea, apCoast, apRiver, apPond, apLake, apPuddle,
     apBath, apPool, apRamen, apMiso, apMilk, apCoffee, apOil, apMagic, apVortex,
-    apDropRipples, apShore);
+    apDropRipples, apShore, apDrain);
   TAquaTrack = (atWaveStrength, atWaveSpeed, atWaveDetail,
     atFlowDirection, atFlowSpeed, atRippleAmount, atRippleSize,
     atRippleSpeed, atViscosity, atReflection, atHighlight, atFoam,
@@ -23,7 +23,8 @@ type
     atOilAmount, atOilSize, atOilGloss,
     atVortexStrength, atVortexSpeed, atVortexRadius, atImageShading,
     atRippleScatter, atRippleAspect,
-    atShoreReach, atShorePeriod, atShoreRoughness, atShoreWaterOpacity, atShoreFoamLife);
+    atShoreReach, atShorePeriod, atShoreRoughness, atShoreWaterOpacity, atShoreFoamLife,
+    atVortexCenterX, atVortexCenterY, atVortexDepth, atVortexPull, atDrainAmount);
 
   TAquaTrackDefinition = record
     Name: PWideChar;
@@ -41,11 +42,12 @@ type
 const
   // プリセットを適用しても、利用者が決めた配置・変形・透明度は維持する。
   AQUA_PLACEMENT_TRACKS = [atX..atTransparency];
+  AQUA_VORTEX_PLACEMENT_TRACKS = [atVortexCenterX, atVortexCenterY];
   AQUA_PRESET_COUNT = Ord(High(TAquaPreset)) + 1;
   AQUA_PRESET_NAMES: array[TAquaPreset] of PWideChar = (
     '海', '海岸', '川', '池', '湖', '水たまり', 'お風呂', 'プール',
     'ラーメンスープ', '味噌汁', '牛乳', 'コーヒー', '油', '魔法液体', '渦', '落水の波紋',
-    '海岸の寄せ返し');
+    '海岸の寄せ返し', '栓を抜く');
   AQUA_DISPLAY_NAMES: array[TAquaDisplayMode] of PWideChar = (
     '背景あり', 'ユーザー画像', '背景なし', '画像に油膜', '画像に波');
   AQUA_SHAPE_NAMES: array[TAquaShape] of PWideChar = (
@@ -93,7 +95,12 @@ const
     (Name: '寄せ返しの周期'; MinValue: 0.5; MaxValue: 30; Step: 0.01),
     (Name: '水際の不規則さ'; MinValue: 0; MaxValue: 100; Step: 1),
     (Name: '海水の不透明度'; MinValue: 0; MaxValue: 100; Step: 1),
-    (Name: '泡の残り'; MinValue: 0; MaxValue: 100; Step: 1));
+    (Name: '泡の残り'; MinValue: 0; MaxValue: 100; Step: 1),
+    (Name: '渦中心X'; MinValue: -100000; MaxValue: 100000; Step: 0.01),
+    (Name: '渦中心Y'; MinValue: -100000; MaxValue: 100000; Step: 0.01),
+    (Name: '渦の凹み'; MinValue: 0; MaxValue: 100; Step: 1),
+    (Name: '渦の吸い込み'; MinValue: 0; MaxValue: 100; Step: 1),
+    (Name: '排水の量'; MinValue: 0; MaxValue: 100; Step: 1));
 
 // プリセットを何度適用しても、同じ基準値を返す。
 // 戻り値は独立した設定値で、ホスト項目や現在の保存設定は変更しない。
@@ -341,13 +348,19 @@ begin
         Result.Shape := asEllipse;
         Result.ColorRGB := $237B91;
         Result.Tracks[atFlowSpeed] := 0;
-        Result.Tracks[atRippleAmount] := 15;
-        Result.Tracks[atFoam] := 25;
         Result.Tracks[atTilt] := 25;
         Result.Tracks[atPerspective] := 20;
         Result.Tracks[atVortexStrength] := 70;
         Result.Tracks[atVortexSpeed] := 1.2;
         Result.Tracks[atVortexRadius] := 90;
+        Result.Tracks[atWaveStrength] := 24;
+        Result.Tracks[atWaveDetail] := 40;
+        Result.Tracks[atRippleAmount] := 0;
+        Result.Tracks[atReflection] := 40;
+        Result.Tracks[atHighlight] := 50;
+        Result.Tracks[atFoam] := 0;
+        Result.Tracks[atVortexDepth] := 45;
+        Result.Tracks[atVortexPull] := 55;
       end;
     apDropRipples:
       begin
@@ -380,6 +393,27 @@ begin
         Result.Tracks[atFoam] := 90;
         Result.Tracks[atTilt] := 0;
         Result.Tracks[atPerspective] := 0;
+      end;
+    apDrain:
+      begin
+        Result.Shape := asRectangle;
+        Result.ColorRGB := $65BECB;
+        Result.Tracks[atWaveStrength] := 6;
+        Result.Tracks[atWaveSpeed] := 0.55;
+        Result.Tracks[atWaveDetail] := 40;
+        Result.Tracks[atFlowSpeed] := 0;
+        Result.Tracks[atRippleAmount] := 0;
+        Result.Tracks[atReflection] := 25;
+        Result.Tracks[atHighlight] := 35;
+        Result.Tracks[atFoam] := 0;
+        Result.Tracks[atTilt] := 0;
+        Result.Tracks[atPerspective] := 0;
+        Result.Tracks[atVortexStrength] := 75;
+        Result.Tracks[atVortexSpeed] := 1.2;
+        Result.Tracks[atVortexRadius] := 70;
+        Result.Tracks[atVortexDepth] := 90;
+        Result.Tracks[atVortexPull] := 95;
+        Result.Tracks[atDrainAmount] := 100;
       end;
   end;
 end;
