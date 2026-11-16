@@ -9,17 +9,19 @@
 interface
 
 type
-  TAquaDisplayMode = (adBackground, adImage, adEffectsOnly, adOilOverlay);
+  TAquaDisplayMode = (adBackground, adImage, adEffectsOnly, adOilOverlay, adWaveOverlay);
   TAquaShape = (asPlane, asRectangle, asEllipse, asImage);
   TAquaPreset = (apSea, apCoast, apRiver, apPond, apLake, apPuddle,
-    apBath, apPool, apRamen, apMiso, apMilk, apCoffee, apOil, apMagic);
+    apBath, apPool, apRamen, apMiso, apMilk, apCoffee, apOil, apMagic, apVortex, apDropRipples);
   TAquaTrack = (atWaveStrength, atWaveSpeed, atWaveDetail,
     atFlowDirection, atFlowSpeed, atRippleAmount, atRippleSize,
     atRippleSpeed, atViscosity, atReflection, atHighlight, atFoam,
     atTilt, atRotation, atPerspective, atSeed,
     atX, atY, atZ, atCenterX, atCenterY, atCenterZ,
     atRotateX, atRotateY, atRotateZ, atZoom, atAspect, atTransparency,
-    atOilAmount, atOilSize, atOilGloss);
+    atOilAmount, atOilSize, atOilGloss,
+    atVortexStrength, atVortexSpeed, atVortexRadius, atImageShading,
+    atRippleScatter, atRippleAspect);
 
   TAquaTrackDefinition = record
     Name: PWideChar;
@@ -40,9 +42,9 @@ const
   AQUA_PRESET_COUNT = Ord(High(TAquaPreset)) + 1;
   AQUA_PRESET_NAMES: array[TAquaPreset] of PWideChar = (
     '海', '海岸', '川', '池', '湖', '水たまり', 'お風呂', 'プール',
-    'ラーメンスープ', '味噌汁', '牛乳', 'コーヒー', '油', '魔法液体');
+    'ラーメンスープ', '味噌汁', '牛乳', 'コーヒー', '油', '魔法液体', '渦', '落水の波紋');
   AQUA_DISPLAY_NAMES: array[TAquaDisplayMode] of PWideChar = (
-    '背景あり', 'ユーザー画像', '背景なし', '画像に油膜');
+    '背景あり', 'ユーザー画像', '背景なし', '画像に油膜', '画像に波');
   AQUA_SHAPE_NAMES: array[TAquaShape] of PWideChar = (
     '平面', '長方形', '円形・楕円形', '画像形状');
 
@@ -77,7 +79,13 @@ const
     (Name: '透明度'; MinValue: 0; MaxValue: 100; Step: 0.01),
     (Name: '油膜の量'; MinValue: 0; MaxValue: 100; Step: 1),
     (Name: '油膜サイズ'; MinValue: 1; MaxValue: 100; Step: 1),
-    (Name: '油膜光沢'; MinValue: 0; MaxValue: 100; Step: 1));
+    (Name: '油膜光沢'; MinValue: 0; MaxValue: 100; Step: 1),
+    (Name: '渦の強さ'; MinValue: -100; MaxValue: 100; Step: 1),
+    (Name: '渦の速さ'; MinValue: 0; MaxValue: 10; Step: 0.01),
+    (Name: '渦の広がり'; MinValue: 1; MaxValue: 100; Step: 1),
+    (Name: '画像の陰影'; MinValue: 0; MaxValue: 100; Step: 1),
+    (Name: '波紋の散らばり'; MinValue: 0; MaxValue: 100; Step: 1),
+    (Name: '波紋の縦横比'; MinValue: -200; MaxValue: 200; Step: 1));
 
 // プリセットを何度適用しても、同じ基準値を返す。
 // 戻り値は独立した設定値で、ホスト項目や現在の保存設定は変更しない。
@@ -131,6 +139,10 @@ begin
   Result.Tracks[atZoom] := 100;
   Result.Tracks[atOilSize] := 60;
   Result.Tracks[atOilGloss] := 65;
+  Result.Tracks[atVortexSpeed] := 1;
+  Result.Tracks[atVortexRadius] := 70;
+  Result.Tracks[atImageShading] := 100;
+  Result.Tracks[atRippleScatter] := 100;
 
   // 器の液体は楕円・俯瞰を基準にする。
   if Preset in [apRamen, apMiso, apMilk, apCoffee, apOil, apMagic] then
@@ -265,6 +277,7 @@ begin
       end;
     apMilk:
       begin
+        Result.Tracks[atImageShading] := 15;
         Result.ColorRGB := $EFEDDE;
         Result.Tracks[atWaveStrength] := 12;
         Result.Tracks[atWaveSpeed] := 0.5;
@@ -276,9 +289,12 @@ begin
     apCoffee:
       begin
         Result.ColorRGB := $412315;
-        Result.Tracks[atRippleAmount] := 30;
+        Result.Tracks[atWaveStrength] := 28;
+        Result.Tracks[atWaveSpeed] := 0.7;
+        Result.Tracks[atRippleAmount] := 45;
         Result.Tracks[atViscosity] := 20;
         Result.Tracks[atReflection] := 65;
+        Result.Tracks[atHighlight] := 90;
         Result.Tracks[atFoam] := 15;
       end;
     apOil:
@@ -305,6 +321,37 @@ begin
     apMagic:
       begin
         Result.ColorRGB := $5B25B9;
+      end;
+    apVortex:
+      begin
+        ApplyWaterMotion(Result);
+        Result.Shape := asEllipse;
+        Result.ColorRGB := $237B91;
+        Result.Tracks[atFlowSpeed] := 0;
+        Result.Tracks[atRippleAmount] := 15;
+        Result.Tracks[atFoam] := 25;
+        Result.Tracks[atTilt] := 25;
+        Result.Tracks[atPerspective] := 20;
+        Result.Tracks[atVortexStrength] := 70;
+        Result.Tracks[atVortexSpeed] := 1.2;
+        Result.Tracks[atVortexRadius] := 90;
+      end;
+    apDropRipples:
+      begin
+        Result.Shape := asRectangle;
+        Result.ColorRGB := $65BECB;
+        Result.Tracks[atWaveStrength] := 0;
+        Result.Tracks[atFlowSpeed] := 0;
+        Result.Tracks[atRippleAmount] := 85;
+        Result.Tracks[atRippleSize] := 45;
+        Result.Tracks[atRippleSpeed] := 0.9;
+        Result.Tracks[atRippleScatter] := 0;
+        Result.Tracks[atViscosity] := 10;
+        Result.Tracks[atReflection] := 55;
+        Result.Tracks[atHighlight] := 80;
+        Result.Tracks[atFoam] := 0;
+        Result.Tracks[atTilt] := 0;
+        Result.Tracks[atPerspective] := 0;
       end;
   end;
 end;

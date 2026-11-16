@@ -9,7 +9,8 @@
 interface
 
 uses
-  AviUtl2FilterTypes, AquaFX_Settings, AquaFX_OilSurface;
+  System.Threading, AviUtl2FilterTypes, AquaFX_Settings, AquaFX_OilSurface, AquaFX_Projection
+  {$IFDEF DEBUG}, AquaFX_Profiling{$ENDIF};
 
 type
   TAquaPixels = array of TPIXEL_RGBA;
@@ -27,7 +28,29 @@ type
     // 画像・効果のみモードで使う油膜の格子。油膜なしでは確保・評価しない。
     FOilGrid: array of TAquaOilSample;
     FColumns: array of TAquaColumnSample;
+    FWavePool: TThreadPool;
+    {$IFDEF DEBUG}
+    FLastProfile: TAquaRenderProfile;
+    {$ENDIF}
+    function SurfaceBounds(Width, Height, GridW, GridH: Integer;
+      out Left, Top, Right, Bottom: Integer): Boolean;
+    // 入力を一度コピーし、油膜に必要な4成分だけを有効範囲で補間する。
+    procedure CompositeOilOverlay(const Input: TAquaPixels;
+      Width, Height, GridW, GridH: Integer; Opacity, TintR, TintG, TintB: Double;
+      var Output: TAquaPixels);
+    // 液面内の変形と光沢を元画像へ合成する。カップ等の範囲外と元アルファは保つ。
+    procedure CompositeImageWaves(const Input: TAquaPixels;
+      Width, Height, GridW, GridH: Integer; Opacity, Shading: Double; var Output: TAquaPixels);
+    // 生成した水面の色とアルファだけを合成する。画像色の再サンプリングは不要。
+    procedure CompositeBackground(const Input: TAquaPixels;
+      Width, Height, GridW, GridH: Integer; Opacity: Double;
+      const Projection: TAquaProjection; NeedsInputMask: Boolean; var Output: TAquaPixels);
   public
+    // 大きな液面で必要になったワーカーを所有し、SDKの破棄通知中に回収する。
+    destructor Destroy; override;
+    {$IFDEF DEBUG}
+    property LastProfile: TAquaRenderProfile read FLastProfile;
+    {$ENDIF}
     // Inputは借用するストレートRGBA、Timeはオブジェクト先頭からの秒数。
     // Outputは呼出側所有の配列を指定サイズへ更新する。Inputや保存設定は変更しない。
     // ClipToInput=Trueでは投影後の入力アルファ内だけへ描き、無効サイズではOutputを空にする。
@@ -43,7 +66,7 @@ const
 implementation
 
 uses
-  System.Math, AquaFX_Projection;
+  System.Math, System.Classes, System.SysUtils, AquaFX_Flow;
 
 const
   LUT_SIZE = 8192;
@@ -52,6 +75,12 @@ const
 
 var
   SinTable: array[0..LUT_SIZE - 1] of Single;
+
+destructor TAquaRenderer.Destroy;
+begin
+  FWavePool.Free;
+  inherited;
+end;
 
 function Saturate(Value: Double): Double; inline;
 begin
@@ -103,6 +132,102 @@ begin
   Result.Shadow := Lerp(A.Shadow, B.Shadow, Weight);
 end;
 
+// 従来のレコード補間と同じく、各行の結果をSingleへ丸めてから縦を補間する。
+// Doubleの式へまとめると既存出力の丸めが変わるため、行ごとの精度を維持する。
+function BilinearSingle(A, B, C, D: Single; FX, FY: Double): Single; inline;
+var
+  Top, Bottom: Single;
+begin
+  Top := Lerp(A, B, FX); Bottom := Lerp(C, D, FX);
+  Result := Lerp(Top, Bottom, FY);
+end;
+
+function TAquaRenderer.SurfaceBounds(Width, Height, GridW, GridH: Integer;
+  out Left, Top, Right, Bottom: Integer): Boolean;
+var
+  GX, GY, GridLeft, GridTop, GridRight, GridBottom: Integer;
+begin
+  Result := False;
+  Left := 0; Top := 0; Right := -1; Bottom := -1;
+  GridLeft := GridW; GridTop := GridH; GridRight := -1; GridBottom := -1;
+  for GY := 0 to GridH - 1 do
+    for GX := 0 to GridW - 1 do
+      if FGrid[GY * GridW + GX].Mask > 0 then
+      begin
+        GridLeft := Min(GridLeft, GX); GridRight := Max(GridRight, GX);
+        GridTop := Min(GridTop, GY); GridBottom := Max(GridBottom, GY);
+      end;
+  if GridRight < 0 then Exit;
+  // 補間で隣の格子へ広がる分を1セル含める。範囲外の元画像はコピーだけで保つ。
+  Left := Max(0, Floor((GridLeft - 1) * (Width - 1) / (GridW - 1)));
+  Right := Min(Width - 1, Ceil((GridRight + 1) * (Width - 1) / (GridW - 1)));
+  Top := Max(0, Floor((GridTop - 1) * (Height - 1) / (GridH - 1)));
+  Bottom := Min(Height - 1, Ceil((GridBottom + 1) * (Height - 1) / (GridH - 1)));
+  Result := True;
+end;
+
+procedure TAquaRenderer.CompositeOilOverlay(const Input: TAquaPixels;
+  Width, Height, GridW, GridH: Integer; Opacity, TintR, TintG, TintB: Double;
+  var Output: TAquaPixels);
+var
+  Left, Top, Right, Bottom, X, Y, IX, NX, IY, NY, Index: Integer;
+  A, B, C, D, RowA, RowB: Integer;
+  FX, FY, GridY, OverlayAlpha: Double;
+  Mask, OilAlpha, Shine, Shadow: Single;
+  Direct: Boolean;
+  Pixel: TPIXEL_RGBA;
+begin
+  Move(Input[0], Output[0], Length(Output) * SizeOf(TPIXEL_RGBA));
+  if not SurfaceBounds(Width, Height, GridW, GridH, Left, Top, Right, Bottom) then Exit;
+  Direct := (GridW = Width) and (GridH = Height);
+  // Directはフレーム中不変。間接補間の値を使う分岐へ初期値も明示する。
+  A := 0; B := 0; C := 0; D := 0; FX := 0;
+  for Y := Top to Bottom do
+  begin
+    GridY := Y * (GridH - 1) / Max(1, Height - 1);
+    IY := Trunc(GridY); NY := Min(IY + 1, GridH - 1); FY := GridY - IY;
+    RowA := IY * GridW; RowB := NY * GridW;
+    for X := Left to Right do
+    begin
+      Index := Y * Width + X;
+      Pixel := Input[Index];
+      if Pixel.A = 0 then Continue;
+      if Direct then
+      begin
+        Mask := FGrid[Index].Mask;
+        OilAlpha := FOilGrid[Index].Alpha;
+      end else
+      begin
+        IX := FColumns[X].Left; NX := FColumns[X].Right; FX := FColumns[X].Fraction;
+        A := RowA + IX; B := RowA + NX; C := RowB + IX; D := RowB + NX;
+        Mask := BilinearSingle(FGrid[A].Mask, FGrid[B].Mask, FGrid[C].Mask, FGrid[D].Mask, FX, FY);
+        if Mask <= 0 then Continue;
+        OilAlpha := BilinearSingle(FOilGrid[A].Alpha, FOilGrid[B].Alpha,
+          FOilGrid[C].Alpha, FOilGrid[D].Alpha, FX, FY);
+      end;
+      OverlayAlpha := Mask * Opacity * OilAlpha;
+      if OverlayAlpha <= 0 then Continue;
+      if Direct then
+      begin
+        Shine := FOilGrid[Index].Shine; Shadow := FOilGrid[Index].Shadow;
+      end else
+      begin
+        Shine := BilinearSingle(FOilGrid[A].Shine, FOilGrid[B].Shine,
+          FOilGrid[C].Shine, FOilGrid[D].Shine, FX, FY);
+        Shadow := BilinearSingle(FOilGrid[A].Shadow, FOilGrid[B].Shadow,
+          FOilGrid[C].Shadow, FOilGrid[D].Shadow, FX, FY);
+      end;
+      Pixel.R := ColorByte(Lerp(Pixel.R / 255, TintR, OverlayAlpha * 0.16) *
+        (1 - Shadow * OverlayAlpha) + Shine * OverlayAlpha * 0.9);
+      Pixel.G := ColorByte(Lerp(Pixel.G / 255, TintG, OverlayAlpha * 0.16) *
+        (1 - Shadow * OverlayAlpha) + Shine * OverlayAlpha * 0.88);
+      Pixel.B := ColorByte(Lerp(Pixel.B / 255, TintB, OverlayAlpha * 0.16) *
+        (1 - Shadow * OverlayAlpha) + Shine * OverlayAlpha * 0.8);
+      Output[Index] := Pixel;
+    end;
+  end;
+end;
+
 // RGBをアルファで重み付けし、透明画素の色が輪郭へにじむのを防ぐ。
 function SampleImage(const Pixels: TAquaPixels; Width, Height: Integer;
   X, Y: Double): TPIXEL_RGBA;
@@ -138,28 +263,192 @@ begin
   Result.A := ColorByte(Alpha);
 end;
 
+// 写真の4近傍がすべて不透明ならアルファの正規化を省く。
+// 透明境界は既存のアルファ重み付き補間へ戻して、隠れたRGBのにじみを防ぐ。
+function SampleWaveImage(const Pixels: TAquaPixels; Width, Height: Integer;
+  X, Y: Double): TPIXEL_RGBA;
+var
+  IX, IY, NX, NY: Integer;
+  FX, FY: Double;
+  A, B, C, D: PPIXEL_RGBA;
+begin
+  X := EnsureRange(X, 0.0, Width - 1.0); Y := EnsureRange(Y, 0.0, Height - 1.0);
+  IX := Trunc(X); IY := Trunc(Y); NX := Min(IX + 1, Width - 1); NY := Min(IY + 1, Height - 1);
+  A := @Pixels[IY * Width + IX]; B := @Pixels[IY * Width + NX];
+  C := @Pixels[NY * Width + IX]; D := @Pixels[NY * Width + NX];
+  if (A^.A <> 255) or (B^.A <> 255) or (C^.A <> 255) or (D^.A <> 255) then
+    Exit(SampleImage(Pixels, Width, Height, X, Y));
+  FX := X - IX; FY := Y - IY;
+  Result.R := Round(Lerp(Lerp(A^.R, B^.R, FX), Lerp(C^.R, D^.R, FX), FY));
+  Result.G := Round(Lerp(Lerp(A^.G, B^.G, FX), Lerp(C^.G, D^.G, FX), FY));
+  Result.B := Round(Lerp(Lerp(A^.B, B^.B, FX), Lerp(C^.B, D^.B, FX), FY));
+  Result.A := 255;
+end;
+
+procedure TAquaRenderer.CompositeBackground(const Input: TAquaPixels;
+  Width, Height, GridW, GridH: Integer; Opacity: Double;
+  const Projection: TAquaProjection; NeedsInputMask: Boolean; var Output: TAquaPixels);
+var
+  Left, Top, Right, Bottom, Row, I: Integer;
+  Opaque: Boolean;
+  Source, Destination: TAquaPixels;
+  RenderRow: TProc<Integer>;
+begin
+  FillChar(Output[0], Length(Output) * SizeOf(TPIXEL_RGBA), 0);
+  if NeedsInputMask and (Length(Input) <> Width * Height) then Exit;
+  if not SurfaceBounds(Width, Height, GridW, GridH, Left, Top, Right, Bottom) then Exit;
+  Opaque := True;
+  if NeedsInputMask then
+    for I := 0 to High(Input) do
+      if Input[I].A <> 255 then begin Opaque := False; Break; end;
+  Source := Input; Destination := Output;
+  RenderRow := procedure(Y: Integer)
+  var
+    X, IX, NX, IY, NY, A, B, C, D: Integer;
+    FX, FY, GridY, U, V, Alpha: Double;
+    S: TAquaSurfaceSample;
+    Pixel, SourcePixel: TPIXEL_RGBA;
+  begin
+    GridY := Y * (GridH - 1) / Max(1, Height - 1);
+    IY := Trunc(GridY); NY := Min(IY + 1, GridH - 1); FY := GridY - IY;
+    for X := Left to Right do
+    begin
+      SourcePixel := Default(TPIXEL_RGBA);
+      if NeedsInputMask then
+      begin
+        if (not Projection.ScreenToSurface(X + 0.5, Y + 0.5, U, V)) or
+          (Abs(U) > 1) or (Abs(V) > 1) then Continue;
+        if Opaque then SourcePixel.A := 255
+        else SourcePixel := SampleImage(Source, Width, Height,
+          (U + 1) * Width * 0.5 - 0.5, (V + 1) * Height * 0.5 - 0.5);
+        if SourcePixel.A = 0 then Continue;
+      end;
+      if (GridW = Width) and (GridH = Height) then S := FGrid[Y * Width + X]
+      else
+      begin
+        IX := FColumns[X].Left; NX := FColumns[X].Right; FX := FColumns[X].Fraction;
+        A := IY * GridW + IX; B := IY * GridW + NX;
+        C := NY * GridW + IX; D := NY * GridW + NX;
+        // 既存の背景ありと同じDouble補間・最後のSingle丸めを保つ。
+        S.Mask := Lerp(Lerp(FGrid[A].Mask, FGrid[B].Mask, FX), Lerp(FGrid[C].Mask, FGrid[D].Mask, FX), FY);
+        if S.Mask <= 0 then Continue;
+        S.R := Lerp(Lerp(FGrid[A].R, FGrid[B].R, FX), Lerp(FGrid[C].R, FGrid[D].R, FX), FY);
+        S.G := Lerp(Lerp(FGrid[A].G, FGrid[B].G, FX), Lerp(FGrid[C].G, FGrid[D].G, FX), FY);
+        S.B := Lerp(Lerp(FGrid[A].B, FGrid[B].B, FX), Lerp(FGrid[C].B, FGrid[D].B, FX), FY);
+      end;
+      Alpha := S.Mask * Opacity;
+      if NeedsInputMask then Alpha := Alpha * SourcePixel.A / 255;
+      Pixel := Default(TPIXEL_RGBA); Pixel.A := ColorByte(Alpha);
+      if Pixel.A > 0 then
+      begin Pixel.R := ColorByte(S.R); Pixel.G := ColorByte(S.G); Pixel.B := ColorByte(S.B); end;
+      Destination[Y * Width + X] := Pixel;
+    end;
+  end;
+  if ((Right - Left + 1) * (Bottom - Top + 1) >= 80000) and (TThread.ProcessorCount > 1) then
+  begin
+    if FWavePool = nil then
+    begin
+      FWavePool := TThreadPool.Create;
+      FWavePool.SetMinWorkerThreads(1); FWavePool.SetMaxWorkerThreads(2);
+      FWavePool.UnlimitedWorkerThreadsWhenBlocked := False;
+    end;
+    TParallel.&For(8, Top, Bottom, RenderRow, FWavePool);
+  end else
+    for Row := Top to Bottom do RenderRow(Row);
+end;
+
+procedure TAquaRenderer.CompositeImageWaves(const Input: TAquaPixels;
+  Width, Height, GridW, GridH: Integer; Opacity, Shading: Double; var Output: TAquaPixels);
+var
+  Left, Top, Right, Bottom, Row: Integer;
+  Source, Destination: TAquaPixels;
+  RenderRow: TProc<Integer>;
+begin
+  Move(Input[0], Output[0], Length(Output) * SizeOf(TPIXEL_RGBA));
+  if not SurfaceBounds(Width, Height, GridW, GridH, Left, Top, Right, Bottom) then Exit;
+  // コールバック中だけ配列の参照を共有する。格子・入力は読取り専用、出力は行で分離する。
+  Source := Input; Destination := Output;
+  RenderRow := procedure(Y: Integer)
+  var
+    X, I, IX, NX, IY, NY, A, B, C, D: Integer;
+    FX, FY, GridY, Weight, R, G, Blue: Double;
+    Mask, DX, DY, Shade, Light: Single;
+    Oil: TAquaOilSample;
+    Pixel, Sampled: TPIXEL_RGBA;
+  begin
+    GridY := Y * (GridH - 1) / Max(1, Height - 1);
+    IY := Trunc(GridY); NY := Min(IY + 1, GridH - 1); FY := GridY - IY;
+    for X := Left to Right do
+    begin
+      I := Y * Width + X; Pixel := Source[I];
+      if Pixel.A = 0 then Continue;
+      IX := FColumns[X].Left; NX := FColumns[X].Right; FX := FColumns[X].Fraction;
+      A := IY * GridW + IX; B := IY * GridW + NX;
+      C := NY * GridW + IX; D := NY * GridW + NX;
+      Mask := BilinearSingle(FGrid[A].Mask, FGrid[B].Mask, FGrid[C].Mask, FGrid[D].Mask, FX, FY);
+      if Mask <= 0 then Continue;
+      DX := BilinearSingle(FGrid[A].DX, FGrid[B].DX, FGrid[C].DX, FGrid[D].DX, FX, FY);
+      DY := BilinearSingle(FGrid[A].DY, FGrid[B].DY, FGrid[C].DY, FGrid[D].DY, FX, FY);
+      Shade := BilinearSingle(FGrid[A].Shade, FGrid[B].Shade, FGrid[C].Shade, FGrid[D].Shade, FX, FY);
+      // 白い液体には陰影だけを弱め、画像の変形と明るい反射は残す。
+      if Shading < 1 then Shade := 1 + (Shade - 1) * Shading;
+      Light := BilinearSingle(FGrid[A].Light, FGrid[B].Light, FGrid[C].Light, FGrid[D].Light, FX, FY);
+      Sampled := SampleWaveImage(Source, Width, Height, X + DX * Mask, Y + DY * Mask);
+      if Sampled.A = 0 then Continue;
+      R := Saturate(Sampled.R / 255 * Shade + Light * 0.2);
+      G := Saturate(Sampled.G / 255 * Shade + Light * 0.2);
+      Blue := Saturate(Sampled.B / 255 * Shade + Light * 0.2);
+      if Length(FOilGrid) > 0 then
+      begin
+        Oil := MixOil(MixOil(FOilGrid[A], FOilGrid[B], FX), MixOil(FOilGrid[C], FOilGrid[D], FX), FY);
+        R := Lerp(R, Oil.R, Oil.Alpha); G := Lerp(G, Oil.G, Oil.Alpha);
+        Blue := Lerp(Blue, Oil.B, Oil.Alpha);
+      end;
+      Weight := Mask * Opacity;
+      Pixel.R := ColorByte(Lerp(Pixel.R / 255, R, Weight));
+      Pixel.G := ColorByte(Lerp(Pixel.G / 255, G, Weight));
+      Pixel.B := ColorByte(Lerp(Pixel.B / 255, Blue, Weight));
+      Destination[I] := Pixel;
+    end;
+  end;
+  if ((Right - Left + 1) * (Bottom - Top + 1) >= 80000) and (TThread.ProcessorCount > 1) then
+  begin
+    if FWavePool = nil then
+    begin
+      FWavePool := TThreadPool.Create;
+      FWavePool.SetMinWorkerThreads(1);
+      FWavePool.SetMaxWorkerThreads(2);
+      FWavePool.UnlimitedWorkerThreadsWhenBlocked := False;
+    end;
+    // 全行の完了を待ってからホストへ戻す。小さな画像は起動コストをかけず直列に処理する。
+    TParallel.&For(8, Top, Bottom, RenderRow, FWavePool);
+  end else
+    for Row := Top to Bottom do RenderRow(Row);
+end;
+
 procedure TAquaRenderer.Render(const Input: TAquaPixels; Width, Height: Integer;
   Time: Double; const Settings: TAquaSettings; ClipToInput: Boolean;
   var Output: TAquaPixels);
 type
   TWave = record KX, KY, Phase, Amplitude: Double; end;
   TRipple = record X, Y, Radius, Width, Strength, MinD2, MaxD2: Double; end;
-  PSurfaceSample = ^TAquaSurfaceSample;
 var
   Waves: array[0..5] of TWave;
   Ripples: array[0..5] of TRipple;
   GridW, GridH, Step, GX, GY, X, Y, Index, I, RippleCount: Integer;
   IX, IY, NX, NY, BaseIndex: Integer;
-  HasInput, NeedsInputMask, HasOil, KeepOilGrid, IsOilOverlay: Boolean;
+  HasInput, NeedsInputMask, HasOil, KeepOilGrid, IsOilOverlay, IsWaveOverlay, IsOverlay, HasVortex: Boolean;
   Projection: TAquaProjection;
   OilSurface: TAquaOilSurface;
+  FlowField: TAquaFlowField;
   OilSample, OilA, OilB: TAquaOilSample;
-  P00, P10, P01, P11: PSurfaceSample;
   Seed, T, Viscosity, Strength, Detail, Flow, FlowAngle: Double;
+  RippleScaleX, RippleScaleY: Double;
   OffsetU, OffsetV, Opacity, SourceX, SourceY, OverlayAlpha: Double;
   BaseR, BaseG, BaseB, Reflection, Highlight, FoamAmount: Double;
   OilTintR, OilTintG, OilTintB: Double;
   ScreenX, ScreenY, U, V, RotU, RotV, Depth, Mask: Double;
+  FlowU, FlowV, J00, J01, J10, J11, OriginalGradU: Double;
   WaveHeight, GradU, GradV, Phase, CosPhase, Distance, RadiusDelta: Double;
   Envelope, DX, DY, InvNormal, NormalX, NormalY, NormalZ: Double;
   Diffuse, Specular, Sky, Fresnel, Ref, Foam, Light, Shade: Double;
@@ -168,6 +457,11 @@ var
   S, RowA, RowB: TAquaSurfaceSample;
   Pixel, SourcePixel: TPIXEL_RGBA;
 begin
+  {$IFDEF DEBUG}
+  FLastProfile := Default(TAquaRenderProfile);
+  FLastProfile.Started := AquaProfileTick;
+  try
+  {$ENDIF}
   if (Width <= 0) or (Height <= 0) or (Width > 8192) or (Height > 8192) or
     (Int64(Width) * Height > AQUA_MAX_PIXELS) then
   begin
@@ -177,19 +471,23 @@ begin
   HasInput := Length(Input) = Width * Height;
   SetLength(Output, Width * Height);
   IsOilOverlay := Settings.DisplayMode = adOilOverlay;
-  if IsOilOverlay and (not HasInput) then
+  IsWaveOverlay := Settings.DisplayMode = adWaveOverlay;
+  IsOverlay := IsOilOverlay or IsWaveOverlay;
+  if IsOverlay and (not HasInput) then
   begin
     FillChar(Output[0], Length(Output) * SizeOf(TPIXEL_RGBA), 0);
     Exit;
   end;
   NeedsInputMask := (ClipToInput or (Settings.DisplayMode = adImage) or
-    (Settings.Shape = asImage)) and (not IsOilOverlay);
+    (Settings.Shape = asImage)) and (not IsOverlay);
   Projection := TAquaProjection.Create(Width, Height, Settings, NeedsInputMask);
   Opacity := Saturate(1 - Settings.Tracks[atTransparency] * 0.01);
   if (not Projection.Valid) or (Opacity <= 0) or
-    (IsOilOverlay and (Settings.Tracks[atOilAmount] <= 0)) then
+    (IsOilOverlay and (Settings.Tracks[atOilAmount] <= 0)) or
+    (IsWaveOverlay and (Settings.Tracks[atWaveStrength] <= 0) and
+      (Settings.Tracks[atRippleAmount] <= 0) and (Settings.Tracks[atOilAmount] <= 0)) then
   begin
-    if IsOilOverlay then Move(Input[0], Output[0], Length(Output) * SizeOf(TPIXEL_RGBA))
+    if IsOverlay then Move(Input[0], Output[0], Length(Output) * SizeOf(TPIXEL_RGBA))
     else FillChar(Output[0], Length(Output) * SizeOf(TPIXEL_RGBA), 0);
     Exit;
   end;
@@ -204,6 +502,8 @@ begin
   FlowAngle := DegToRad(Settings.Tracks[atFlowDirection]);
   OffsetU := T * Flow * Cos(FlowAngle);
   OffsetV := T * Flow * Sin(FlowAngle);
+  FlowField := TAquaFlowField.Create(Settings, T);
+  HasVortex := FlowField.Active;
   HasOil := Settings.Tracks[atOilAmount] > 0;
   KeepOilGrid := HasOil and (Settings.DisplayMode <> adBackground);
   if HasOil then OilSurface := TAquaOilSurface.Create(Settings, T, OffsetU, OffsetV);
@@ -230,11 +530,20 @@ begin
   Life := 3.5 + Settings.Tracks[atRippleSize] * 0.025;
   Interval := Life / Max(1, RippleCount);
   EventID := Floor(T / Interval);
+  // 長方形へ合わせた水面でも、波紋だけを円形へ補正できる。
+  RippleScaleX := 1 + Max(0.0, Settings.Tracks[atRippleAspect] * 0.01);
+  RippleScaleY := 1 + Max(0.0, -Settings.Tracks[atRippleAspect] * 0.01);
   for I := 0 to RippleCount - 1 do
   begin
     Age := T - (EventID - I) * Interval;
     Ripples[I].X := (Noise(EventID - I, 1, Seed) - 0.5) * 1.8;
     Ripples[I].Y := (Noise(EventID - I, 2, Seed) - 0.5) * 1.8;
+    // 100は従来と同じ分布、0は毎回同じ中心から発生する。
+    if Settings.Tracks[atRippleScatter] <> 100 then
+    begin
+      Ripples[I].X := Ripples[I].X * Settings.Tracks[atRippleScatter] * 0.01;
+      Ripples[I].Y := Ripples[I].Y * Settings.Tracks[atRippleScatter] * 0.01;
+    end;
     if Settings.Shape = asPlane then
     begin
       Ripples[I].X := Ripples[I].X * 2.5;
@@ -263,12 +572,19 @@ begin
   end;
   if KeepOilGrid then SetLength(FOilGrid, GridW * GridH) else SetLength(FOilGrid, 0);
   Edge := 3 / Min(Width, Height);
+  {$IFDEF DEBUG}
+  FLastProfile.GridWidth := GridW; FLastProfile.GridHeight := GridH;
+  FLastProfile.SetupDone := AquaProfileTick;
+  {$ENDIF}
   for GY := 0 to GridH - 1 do
   begin
     ScreenY := GY * (Height - 1) / (GridH - 1) + 0.5;
     for GX := 0 to GridW - 1 do
     begin
       S := Default(TAquaSurfaceSample);
+      // 写真へ重ねる波の範囲外は中立の明るさにする。
+      // Shade=0を境界へ補間すると、元画像に暗い輪郭が付いてしまう。
+      if IsWaveOverlay then S.Shade := 1;
       if KeepOilGrid then FOilGrid[GY * GridW + GX] := Default(TAquaOilSample);
       ScreenX := GX * (Width - 1) / (GridW - 1) + 0.5;
       if not Projection.ScreenToSurface(ScreenX, ScreenY, RotU, RotV) then
@@ -285,9 +601,11 @@ begin
       if Mask > 0 then
       begin
         // 形状で波の倍率を変えず、「魔法液体」と同じ基準で模様を生成する。
-        U := RotU - OffsetU; V := RotV - OffsetV;
+        FlowU := RotU; FlowV := RotV;
+        if HasVortex then FlowField.Map(RotU, RotV, FlowU, FlowV, J00, J01, J10, J11);
+        U := FlowU - OffsetU; V := FlowV - OffsetV;
         WaveHeight := 0; GradU := 0; GradV := 0;
-        for I := 0 to High(Waves) do
+        if Strength > 0 then for I := 0 to High(Waves) do
         begin
           Phase := U * Waves[I].KX + V * Waves[I].KY + Waves[I].Phase;
           CosPhase := FastSin(Phase + Pi * 0.5) * Waves[I].Amplitude;
@@ -295,9 +613,17 @@ begin
           GradU := GradU + CosPhase * Waves[I].KX;
           GradV := GradV + CosPhase * Waves[I].KY;
         end;
+        if HasVortex then
+        begin
+          OriginalGradU := GradU;
+          GradU := J00 * GradU + J10 * GradV;
+          GradV := J01 * OriginalGradU + J11 * GradV;
+        end;
         for I := 0 to RippleCount - 1 do
         begin
           DX := RotU - Ripples[I].X; DY := RotV - Ripples[I].Y;
+          if RippleScaleX <> 1 then DX := DX * RippleScaleX;
+          if RippleScaleY <> 1 then DY := DY * RippleScaleY;
           Distance := DX * DX + DY * DY;
           // 波紋の細い帯以外は平方根と三角関数を省略する。
           if (Distance < Ripples[I].MinD2) or (Distance > Ripples[I].MaxD2) then Continue;
@@ -309,8 +635,8 @@ begin
             Scale := 12 / Ripples[I].Width;
             CosPhase := FastSin(RadiusDelta * Scale + Pi * 0.5) *
               Sqr(Envelope) * Ripples[I].Strength;
-            GradU := GradU + CosPhase * DX / Distance;
-            GradV := GradV + CosPhase * DY / Distance;
+            GradU := GradU + CosPhase * DX / Distance * RippleScaleX;
+            GradV := GradV + CosPhase * DY / Distance * RippleScaleY;
           end;
         end;
         InvNormal := 1 / Sqrt(1 + GradU * GradU + GradV * GradV);
@@ -336,7 +662,7 @@ begin
         S.Light := Light;
         if HasOil then
         begin
-          OilSample := OilSurface.Sample(RotU, RotV, GradU, GradV, Light);
+          OilSample := OilSurface.Sample(FlowU, FlowV, GradU, GradV, Light);
           if KeepOilGrid then FOilGrid[GY * GridW + GX] := OilSample;
           S.R := Lerp(S.R, OilSample.R, OilSample.Alpha);
           S.G := Lerp(S.G, OilSample.G, OilSample.Alpha);
@@ -347,6 +673,27 @@ begin
     end;
   end;
 
+  {$IFDEF DEBUG}
+  FLastProfile.SurfaceDone := AquaProfileTick;
+  {$ENDIF}
+  if IsOilOverlay then
+  begin
+    CompositeOilOverlay(Input, Width, Height, GridW, GridH, Opacity,
+      OilTintR, OilTintG, OilTintB, Output);
+    Exit;
+  end;
+  if IsWaveOverlay then
+  begin
+    CompositeImageWaves(Input, Width, Height, GridW, GridH, Opacity,
+      Saturate(Settings.Tracks[atImageShading] * 0.01), Output);
+    Exit;
+  end;
+  if Settings.DisplayMode = adBackground then
+  begin
+    CompositeBackground(Input, Width, Height, GridW, GridH, Opacity,
+      Projection, NeedsInputMask, Output);
+    Exit;
+  end;
   for Y := 0 to Height - 1 do
   begin
     GridY := Y * (GridH - 1) / Max(1, Height - 1);
@@ -357,15 +704,6 @@ begin
       Index := BaseIndex + X;
       Pixel := Default(TPIXEL_RGBA);
       SourcePixel := Default(TPIXEL_RGBA);
-      if IsOilOverlay then
-      begin
-        Pixel := Input[Index];
-        if Pixel.A = 0 then
-        begin
-          Output[Index] := Pixel;
-          Continue;
-        end;
-      end;
       if NeedsInputMask then
       begin
         if (not HasInput) or (not Projection.ScreenToSurface(X + 0.5, Y + 0.5, U, V)) or
@@ -385,16 +723,7 @@ begin
       end;
       IX := FColumns[X].Left; NX := FColumns[X].Right; FX := FColumns[X].Fraction;
       if (GridW = Width) and (GridH = Height) then S := FGrid[Index]
-      else if Settings.DisplayMode = adBackground then
-      begin
-        // 背景ありでは未使用の画像変形・光沢成分まで補間しない。
-        P00 := @FGrid[IY * GridW + IX]; P10 := @FGrid[IY * GridW + NX];
-        P01 := @FGrid[NY * GridW + IX]; P11 := @FGrid[NY * GridW + NX];
-        S.R := Lerp(Lerp(P00^.R, P10^.R, FX), Lerp(P01^.R, P11^.R, FX), FY);
-        S.G := Lerp(Lerp(P00^.G, P10^.G, FX), Lerp(P01^.G, P11^.G, FX), FY);
-        S.B := Lerp(Lerp(P00^.B, P10^.B, FX), Lerp(P01^.B, P11^.B, FX), FY);
-        S.Mask := Lerp(Lerp(P00^.Mask, P10^.Mask, FX), Lerp(P01^.Mask, P11^.Mask, FX), FY);
-      end else
+      else
       begin
         RowA := MixSample(FGrid[IY * GridW + IX], FGrid[IY * GridW + NX], FX);
         RowB := MixSample(FGrid[NY * GridW + IX], FGrid[NY * GridW + NX], FX);
@@ -409,19 +738,7 @@ begin
       end;
       Alpha := S.Mask * Opacity;
       if NeedsInputMask then Alpha := Alpha * SourcePixel.A / 255;
-      if IsOilOverlay then
-      begin
-        // 元画像の位置・色・アルファは油膜のない場所ではそのまま維持する。
-        OverlayAlpha := S.Mask * Opacity * OilSample.Alpha;
-        // 色は薄く乗せ、膜の縁と照りを別に合成して麺や具材の質感を残す。
-        Pixel.R := ColorByte(Lerp(Pixel.R / 255, OilTintR, OverlayAlpha * 0.16) *
-          (1 - OilSample.Shadow * OverlayAlpha) + OilSample.Shine * OverlayAlpha * 0.9);
-        Pixel.G := ColorByte(Lerp(Pixel.G / 255, OilTintG, OverlayAlpha * 0.16) *
-          (1 - OilSample.Shadow * OverlayAlpha) + OilSample.Shine * OverlayAlpha * 0.88);
-        Pixel.B := ColorByte(Lerp(Pixel.B / 255, OilTintB, OverlayAlpha * 0.16) *
-          (1 - OilSample.Shadow * OverlayAlpha) + OilSample.Shine * OverlayAlpha * 0.8);
-        Alpha := Pixel.A / 255;
-      end else if Settings.DisplayMode = adEffectsOnly then
+      if Settings.DisplayMode = adEffectsOnly then
       begin
         OverlayAlpha := S.Light * (1 - OilSample.Alpha) + OilSample.Alpha;
         Alpha := Alpha * OverlayAlpha;
@@ -447,6 +764,13 @@ begin
       Output[Index] := Pixel;
     end;
   end;
+  {$IFDEF DEBUG}
+  finally
+    FLastProfile.Finished := AquaProfileTick;
+    if FLastProfile.SetupDone = 0 then FLastProfile.SetupDone := FLastProfile.Finished;
+    if FLastProfile.SurfaceDone = 0 then FLastProfile.SurfaceDone := FLastProfile.Finished;
+  end;
+  {$ENDIF}
 end;
 
 procedure InitializeSinTable;

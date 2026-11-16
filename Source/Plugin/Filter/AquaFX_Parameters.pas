@@ -33,6 +33,7 @@ var
   SettingsButton: TFILTER_ITEM_BUTTON;
   PlacementGroup, PlacementGroupEnd: TFILTER_ITEM_GROUP;
   OilGroup, OilGroupEnd: TFILTER_ITEM_GROUP;
+  VortexGroup, VortexGroupEnd: TFILTER_ITEM_GROUP;
 
 procedure ApplyPreset(Edit: PEDIT_SECTION; Obj: OBJECT_HANDLE;
   Effect, Item: PWideChar); cdecl;
@@ -130,6 +131,20 @@ begin
       Settings.Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].MinValue,
       AQUA_TRACK_DEFINITIONS[Track].MaxValue,
       AQUA_TRACK_DEFINITIONS[Track].Step);
+
+  AddTrack(Tracks[atImageShading], AQUA_TRACK_DEFINITIONS[atImageShading].Name,
+    Settings.Tracks[atImageShading], 0, 100, 1);
+  for Track := atRippleScatter to atRippleAspect do
+    AddTrack(Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].Name,
+      Settings.Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].MinValue,
+      AQUA_TRACK_DEFINITIONS[Track].MaxValue, AQUA_TRACK_DEFINITIONS[Track].Step);
+
+  AddGroup(VortexGroup, '渦', 1);
+  for Track := atVortexStrength to atVortexRadius do
+    AddTrack(Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].Name,
+      Settings.Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].MinValue,
+      AQUA_TRACK_DEFINITIONS[Track].MaxValue, AQUA_TRACK_DEFINITIONS[Track].Step);
+  AddGroup(VortexGroupEnd, '', 1);
 
   AddGroup(OilGroup, '表面の油', 1);
   AddColor(OilColor, '油膜色', Byte(Settings.OilColorRGB and $FF),

@@ -8,12 +8,14 @@
 {$Q+}
 
 uses
-  System.SysUtils, System.Math, System.Diagnostics, Winapi.Windows,
+  System.SysUtils, System.Math, System.Diagnostics, System.Classes,
+  System.Hash, Winapi.Windows,
   Vcl.Imaging.pngimage,
   AviUtl2FilterTypes in '..\Source\Lib\AviUtl2FilterTypes.pas',
   AquaFX_Settings in '..\Source\Common\AquaFX_Settings.pas',
   AquaFX_OilSurface in '..\Source\Common\AquaFX_OilSurface.pas',
   AquaFX_Projection in '..\Source\Common\AquaFX_Projection.pas',
+  AquaFX_Flow in '..\Source\Common\AquaFX_Flow.pas',
   AquaFX_Renderer in '..\Source\Common\AquaFX_Renderer.pas';
 
 type
@@ -455,6 +457,141 @@ begin
   Writeln('PASS native oil overlay: source texture, alpha, mask, placement, opacity, zero amount, animation and reverse seek');
 end;
 
+// 回転の向き、半径保存、逆時刻と勾配を、画像の見た目とは独立に検査する。
+procedure VerifyVortexFlow;
+var
+  Settings: TAquaSettings;
+  Flow, Reverse: TAquaFlowField;
+  U, V, A, B, C, D, X, Y, E, F, G, H: Double;
+begin
+  Check((Ord(adOilOverlay) = 3) and (Ord(apMagic) = 13), 'Existing saved indices changed');
+  Settings := AquaPresetSettings(apCoffee);
+  Flow := TAquaFlowField.Create(Settings, 2);
+  Flow.Map(0.5, 0.2, U, V, A, B, C, D);
+  Check((U = 0.5) and (V = 0.2), 'Zero vortex changed coordinates');
+  Settings.Tracks[atViscosity] := 0;
+  Settings.Tracks[atVortexStrength] := 60;
+  Settings.Tracks[atVortexSpeed] := 1.2;
+  Flow := TAquaFlowField.Create(Settings, 2);
+  Flow.Map(0.5, 0, U, V, A, B, C, D);
+  Check((V < 0) and SameValue(Sqr(U) + Sqr(V), 0.25, 1E-12), 'Vortex direction/radius');
+  Reverse := TAquaFlowField.Create(Settings, -2);
+  Reverse.Map(U, V, X, Y, E, F, G, H);
+  Check(SameValue(X, 0.5, 1E-12) and SameValue(Y, 0, 1E-12), 'Vortex inverse time');
+  Flow.Map(0.3, 0.2, U, V, A, B, C, D);
+  Flow.Map(0.300001, 0.2, X, Y, E, F, G, H);
+  Check(SameValue((X - U) / 0.000001, A, 1E-5) and
+    SameValue((Y - V) / 0.000001, C, 1E-5), 'Vortex derivative U');
+  Flow.Map(0.3, 0.200001, X, Y, E, F, G, H);
+  Check(SameValue((X - U) / 0.000001, B, 1E-5) and
+    SameValue((Y - V) / 0.000001, D, 1E-5), 'Vortex derivative V');
+  Flow.Map(4, 3, U, V, A, B, C, D);
+  Check((U = 4) and (V = 3), 'Vortex changed coordinates outside radius');
+  Settings.Tracks[atVortexSpeed] := 0;
+  Flow := TAquaFlowField.Create(Settings, 2);
+  Check(not Flow.Active, 'Zero vortex speed remains active');
+  Settings := AquaPresetSettings(apVortex);
+  Check((Settings.Tracks[atVortexStrength] > 0) and
+    (Settings.Tracks[atFlowSpeed] = 0), 'Vortex preset is not rotational');
+  Writeln('PASS vortex flow: saved indices, zero, direction, radius, inverse time and derivatives');
+end;
+
+// 本番AUF2でカップ外・入力アルファ・無効化と、波/油膜の渦の保存値を確認する。
+procedure VerifyNativeWavesAndVortex(Table: PFILTER_PLUGIN_TABLE; var Video: TFILTER_PROC_VIDEO);
+var
+  Edit: TEDIT_SECTION;
+  First, Clockwise: TAquaPixels;
+  I, X, Y, Changed: Integer;
+
+  procedure Number(const Name: string; Value: Double);
+  begin PFILTER_ITEM_TRACK(FindItem(Table, Name, 'track'))^.Value := Value; end;
+
+  procedure Frame(Time: Double);
+  begin
+    Video.Object_^.Time := Time; SetCount := 0;
+    Table^.Func_Proc_Video(@Video);
+    Check(SetCount = 1, 'Wave/vortex native frame missing');
+  end;
+
+begin
+  Edit := Default(TEDIT_SECTION); Edit.SetObjectItemValue := AcceptItem;
+  PFILTER_ITEM_SELECT(FindItem(Table, '表示モード', 'select'))^.Value := Ord(adWaveOverlay);
+  PFILTER_ITEM_SELECT(FindItem(Table, 'プリセット', 'select'))^.Value := Ord(apCoffee);
+  PFILTER_ITEM_BUTTON(FindItem(Table, '設定', 'button'))^.Callback2(@Edit, Pointer(1234), '水面演出:2', '設定');
+  for I := Ord(atX) to Ord(atTransparency) do Number(string(AQUA_TRACK_DEFINITIONS[TAquaTrack(I)].Name), 0);
+  Number('拡大率', 68); Number('3D傾斜角度', 0); Number('遠近感', 0);
+  Video.Object_^.Flag := 0; Video.Object_^.Width := 384; Video.Object_^.Height := 256;
+  Video.GetImageData := GetImage;
+  SetLength(HostInput, 384 * 256);
+  for Y := 0 to 255 do
+    for X := 0 to 383 do
+    begin
+      I := Y * 384 + X;
+      HostInput[I].R := 40 + (X mod 24) * 4;
+      HostInput[I].G := 25 + (Y mod 30) * 3; HostInput[I].B := 12;
+      HostInput[I].A := 80 + X mod 176;
+      if Y < 8 then HostInput[I].A := 0;
+    end;
+  Frame(1); First := Copy(Captured); Changed := 0;
+  for I := 0 to High(Captured) do
+  begin
+    Check(Captured[I].A = HostInput[I].A, 'Wave changed source alpha');
+    if not CompareMem(@Captured[I], @HostInput[I], SizeOf(TPIXEL_RGBA)) then Inc(Changed);
+    X := I mod 384; Y := I div 384;
+    if (Abs(X - 192) > 100) or (Abs(Y - 128) > 100) or (HostInput[I].A = 0) then
+      Check(CompareMem(@Captured[I], @HostInput[I], SizeOf(TPIXEL_RGBA)), 'Wave changed cup/outside mask');
+  end;
+  Check(Changed > 500, 'Coffee waves not visible');
+  Frame(2); Check(not Same(First, Captured), 'Coffee waves did not animate');
+  Frame(1); Check(Same(First, Captured), 'Coffee reverse seek changed output');
+  Number('透明度', 100); Frame(1); Check(Same(HostInput, Captured), 'Wave transparency did not restore source');
+  Number('透明度', 0); Number('拡大率', 0); Frame(1);
+  Check(Same(HostInput, Captured), 'Wave zero zoom did not restore source');
+  Number('拡大率', 68); Number('波の強さ', 0); Number('波紋の量', 0); Frame(1);
+  Check(Same(HostInput, Captured), 'Zero waves did not restore source');
+  Number('波の強さ', 25); Number('渦の強さ', 65); Number('流速', 0); Frame(2);
+  Clockwise := Copy(Captured); Number('渦の強さ', -65); Frame(2);
+  Check(not Same(Clockwise, Captured), 'Wave vortex direction did not change image');
+  PFILTER_ITEM_SELECT(FindItem(Table, '表示モード', 'select'))^.Value := Ord(adOilOverlay);
+  Number('油膜の量', 48); Number('渦の強さ', 65); Frame(2); Clockwise := Copy(Captured);
+  Frame(3); Check(not Same(Clockwise, Captured), 'Oil vortex did not animate');
+  Frame(2); Check(Same(Clockwise, Captured), 'Oil vortex reverse seek changed output');
+  Number('渦の強さ', -65); Frame(2);
+  Check(not Same(Clockwise, Captured), 'Oil vortex direction did not change image');
+  PFILTER_ITEM_SELECT(FindItem(Table, 'プリセット', 'select'))^.Value := Ord(apVortex);
+  PFILTER_ITEM_BUTTON(FindItem(Table, '設定', 'button'))^.Callback2(@Edit, Pointer(1234), '水面演出:2', '設定');
+  Check(PFILTER_ITEM_TRACK(FindItem(Table, '渦の強さ', 'track'))^.Value = 70, 'Native vortex preset not applied');
+  PFILTER_ITEM_SELECT(FindItem(Table, 'プリセット', 'select'))^.Value := Ord(apSea);
+  PFILTER_ITEM_BUTTON(FindItem(Table, '設定', 'button'))^.Callback2(@Edit, Pointer(1234), '水面演出:2', '設定');
+  Check(PFILTER_ITEM_TRACK(FindItem(Table, '渦の強さ', 'track'))^.Value = 0, 'Water preset did not reset vortex');
+  // 間引いた格子の境界でも、波と光沢をほぼ止めた一様画像に暗い縁を作らない。
+  PFILTER_ITEM_SELECT(FindItem(Table, '表示モード', 'select'))^.Value := Ord(adWaveOverlay);
+  PFILTER_ITEM_SELECT(FindItem(Table, '水面形状', 'select'))^.Value := Ord(asEllipse);
+  Number('波の強さ', 0); Number('波紋の量', 1); Number('泡の量', 0);
+  Number('ハイライトの強さ', 0); Number('3D傾斜角度', 0); Number('遠近感', 0);
+  Video.Object_^.Width := 1152; Video.Object_^.Height := 1024;
+  SetLength(HostInput, 1152 * 1024);
+  for I := 0 to High(HostInput) do
+  begin
+    HostInput[I].R := 100; HostInput[I].G := 100; HostInput[I].B := 100; HostInput[I].A := 200;
+  end;
+  Frame(0);
+  for I := 0 to High(Captured) do
+    Check((Captured[I].R >= 98) and (Captured[I].A = 200), 'Wave interpolation created a dark border');
+  First := Copy(Captured); Frame(1); Frame(0);
+  Check(Same(First, Captured), 'Parallel wave rows changed reverse-seek output');
+  Number('画像の陰影', 0); Number('波の強さ', 50); Number('波紋の量', 0);
+  for I := 0 to High(HostInput) do
+  begin
+    HostInput[I].R := 240; HostInput[I].G := 240; HostInput[I].B := 240; HostInput[I].A := 255;
+  end;
+  Frame(1);
+  for I := 0 to High(Captured) do
+    Check((Captured[I].R = 240) and (Captured[I].G = 240) and
+      (Captured[I].B = 240) and (Captured[I].A = 255), 'Zero image shading darkened white liquid');
+  Writeln('PASS native waves/vortex: cup bounds, alpha, disable, animation, signed rotation, seek and presets');
+end;
+
 procedure VerifyPlugin(const Path: string);
 var
   Module: HMODULE;
@@ -541,6 +678,7 @@ begin
       VerifyNativePlacement(Table, Video);
       VerifyNativeOil(Table, Video);
       VerifyNativeOilOverlay(Table, Video);
+      VerifyNativeWavesAndVortex(Table, Video);
       Video.Object_ := nil;
       Check(Table^.Func_Proc_Video(@Video) = 1, 'Invalid callback handling');
     finally
@@ -608,7 +746,7 @@ begin
   finally
     FreeLibrary(Module);
   end;
-  Writeln('Exported 14 native preset previews: ', ImageDirectory);
+  Writeln('Exported ', AQUA_PRESET_COUNT, ' native preset previews: ', ImageDirectory);
 end;
 
 procedure VerifyOilRenderer;
@@ -663,6 +801,41 @@ begin
   finally
     Renderer.Free;
   end;
+end;
+
+// 着水点がシードで移動せず、時刻で広がり、逆シークで復元することを確認する。
+procedure VerifyDropRipples;
+var
+  Renderer: TAquaRenderer;
+  Settings: TAquaSettings;
+  Input, A, B, C: TAquaPixels;
+  Preset: TAquaPreset;
+begin
+  for Preset := apSea to apVortex do
+    Check(AquaPresetSettings(Preset).Tracks[atRippleScatter] = 100,
+      'Existing preset changed ripple distribution');
+  Renderer := TAquaRenderer.Create;
+  try
+    Settings := AquaPresetSettings(apDropRipples);
+    Renderer.Render(Input, 320, 240, 1, Settings, False, A);
+    Settings.Tracks[atSeed] := 999;
+    Renderer.Render(Input, 320, 240, 1, Settings, False, B);
+    Check(Same(A, B), 'Fixed impact point depends on seed');
+    Renderer.Render(Input, 320, 240, 1.5, Settings, False, C);
+    Check(not Same(A, C), 'Drop ripples did not expand');
+    Renderer.Render(Input, 320, 240, 1, Settings, False, C);
+    Check(Same(A, C), 'Drop ripples changed on reverse seek');
+    Settings.Tracks[atRippleAspect] := 100;
+    Renderer.Render(Input, 320, 240, 1, Settings, False, C);
+    Check(not Same(A, C), 'Ripple aspect correction has no effect');
+    Settings.Tracks[atRippleAspect] := 0;
+    Settings.Tracks[atRippleScatter] := 100;
+    Renderer.Render(Input, 320, 240, 1, Settings, False, C);
+    Check(not Same(A, C), 'Ripple scatter has no effect');
+  finally
+    Renderer.Free;
+  end;
+  Writeln('PASS drop ripples: fixed impact, expansion, reverse seek, aspect and old defaults');
 end;
 
 procedure VerifyRenderer;
@@ -725,6 +898,212 @@ begin
   end;
 end;
 
+// 同じ本番DLLを複数解像度・表示モードで測る。PNG保存とハッシュは計測外。
+// 元画像と設定を固定し、変更前後の画像一致も照合できるようにする。
+procedure ReadBenchmarkAlias(const Path: string; var Settings: TAquaSettings);
+var
+  Lines: TStringList;
+  Line, Name, Value: string;
+  Reading: Boolean;
+  EqualsAt: Integer;
+  Track: TAquaTrack;
+  Mode: TAquaDisplayMode;
+  Shape: TAquaShape;
+  Number: Double;
+begin
+  Lines := TStringList.Create;
+  try
+    Lines.LoadFromFile(Path, TEncoding.UTF8); Reading := False;
+    for Line in Lines do
+    begin
+      if Line.StartsWith('effect.name=') then Reading := Line = 'effect.name=水面演出';
+      if not Reading then Continue;
+      EqualsAt := Pos('=', Line); if EqualsAt = 0 then Continue;
+      Name := Copy(Line, 1, EqualsAt - 1); Value := Copy(Line, EqualsAt + 1, MaxInt);
+      for Track := Low(TAquaTrack) to High(TAquaTrack) do
+        if Name = string(AQUA_TRACK_DEFINITIONS[Track].Name) then
+        begin
+          Check(TryStrToFloat(Value, Number, TFormatSettings.Invariant), 'Benchmark requires constant track: ' + Name);
+          Settings.Tracks[Track] := Number;
+        end;
+      for Mode := Low(TAquaDisplayMode) to High(TAquaDisplayMode) do
+        if (Name = '表示モード') and (Value = string(AQUA_DISPLAY_NAMES[Mode])) then Settings.DisplayMode := Mode;
+      for Shape := Low(TAquaShape) to High(TAquaShape) do
+        if (Name = '水面形状') and (Value = string(AQUA_SHAPE_NAMES[Shape])) then Settings.Shape := Shape;
+      if Name = '液体色' then Settings.ColorRGB := StrToInt('$' + Value);
+      if Name = '油膜色' then Settings.OilColorRGB := StrToInt('$' + Value);
+    end;
+  finally
+    Lines.Free;
+  end;
+end;
+
+procedure BenchmarkPlugin(const Path, SourcePath: string);
+const
+  FrameCount = 9;
+  Names: array[0..8] of string = ('ramen_overlay', 'fullhd_overlay',
+    'fullhd_sea', 'fullhd_oil', 'fullhd_image', 'image_waves', 'water_vortex', 'ramen_vortex', 'bath_ripples');
+var
+  Module: HMODULE;
+  Initialize: TInitialize;
+  Uninitialize: TUninitialize;
+  GetTable: TGetTable;
+  Table: PFILTER_PLUGIN_TABLE;
+  Video: TFILTER_PROC_VIDEO;
+  Scene: TSCENE_INFO;
+  Obj: TOBJECT_INFO;
+  Settings: TAquaSettings;
+  Track: TAquaTrack;
+  Source: TAquaPixels;
+  PNG: TPngImage;
+  CSV: TStringList;
+  Timer: TStopwatch;
+  Samples: array[0..FrameCount - 1] of Double;
+  Scenario, W, H, X, Y, I, J: Integer;
+  Color: Cardinal;
+  Swap, Sum: Double;
+  ImagePath, Digest: string;
+begin
+  Check(FileExists(SourcePath), 'Benchmark source image missing: ' + SourcePath);
+  PNG := TPngImage.Create;
+  try
+    PNG.LoadFromFile(SourcePath);
+    W := PNG.Width; H := PNG.Height;
+    SetLength(Source, W * H);
+    for Y := 0 to H - 1 do
+      for X := 0 to W - 1 do
+      begin
+        I := Y * W + X; Color := PNG.Pixels[X, Y];
+        Source[I].R := GetRValue(Color); Source[I].G := GetGValue(Color);
+        Source[I].B := GetBValue(Color); Source[I].A := 255;
+        if PNG.AlphaScanline[Y] <> nil then Source[I].A := PNG.AlphaScanline[Y]^[X];
+      end;
+  finally
+    PNG.Free;
+  end;
+  CSV := TStringList.Create;
+  Module := LoadLibrary(PChar(Path));
+  Check(Module <> 0, 'Benchmark LoadLibrary: ' + Path);
+  try
+    @Initialize := GetProcAddress(Module, 'InitializePlugin');
+    @Uninitialize := GetProcAddress(Module, 'UninitializePlugin');
+    @GetTable := GetProcAddress(Module, 'GetFilterPluginTable');
+    Check(Assigned(Initialize) and Assigned(GetTable) and Assigned(Uninitialize), 'Benchmark exports');
+    Check(Initialize(2011700) = 1, 'Benchmark initialization');
+    Table := GetTable;
+    Video := Default(TFILTER_PROC_VIDEO);
+    Scene := Default(TSCENE_INFO); Obj := Default(TOBJECT_INFO);
+    Video.Scene := @Scene; Video.Object_ := @Obj;
+    Video.GetImageData := GetImage; Video.SetImageData := SetImage;
+    Video.UserData := Table^.Func_Create(900);
+    Check(Video.UserData <> nil, 'Benchmark session');
+    CSV.Add('scenario,width,height,frames,median_ms,mean_ms,min_ms,max_ms,png_sha256');
+    try
+      for Scenario := 0 to High(Names) do
+      begin
+        if (ParamStr(5) <> '') and (ParamStr(5) <> Names[Scenario]) then Continue;
+        Settings := AquaPresetSettings(apOil);
+        Settings.DisplayMode := adOilOverlay;
+        if Scenario in [0, 5, 7, 8] then
+        begin
+          Obj.Width := W; Obj.Height := H;
+          Settings.Tracks[atX] := 0; Settings.Tracks[atY] := 208;
+          Settings.Tracks[atZoom] := 42.460; Settings.Tracks[atAspect] := 90;
+          Settings.Tracks[atTilt] := 0; Settings.Tracks[atPerspective] := 0;
+          Settings.Tracks[atOilAmount] := 32; Settings.Tracks[atOilSize] := 30;
+          Settings.Tracks[atOilGloss] := 55;
+          if Scenario = 5 then
+          begin
+            Settings := AquaPresetSettings(apCoffee); Settings.DisplayMode := adWaveOverlay;
+            Settings.Tracks[atTilt] := 0; Settings.Tracks[atPerspective] := 0;
+            Settings.Tracks[atX] := -20; Settings.Tracks[atY] := -155;
+            Settings.Tracks[atZoom] := 50; Settings.Tracks[atAspect] := 38;
+          end;
+          if Scenario = 7 then
+          begin
+            Settings.Tracks[atFlowSpeed] := 0;
+            Settings.Tracks[atVortexStrength] := 65; Settings.Tracks[atVortexSpeed] := 1.2;
+          end;
+          if Scenario = 8 then
+          begin
+            Settings := AquaPresetSettings(apDropRipples);
+            Settings.Tracks[atY] := -8;
+            Settings.Tracks[atZoom] := 54;
+            Settings.Tracks[atAspect] := 65;
+            Settings.Tracks[atRippleAspect] := 148;
+            Settings.Tracks[atTransparency] := 35;
+          end;
+        end else
+        begin
+          Obj.Width := 1920; Obj.Height := 1080;
+          case Scenario of
+            2: Settings := AquaPresetSettings(apSea);
+            3: Settings.DisplayMode := adBackground;
+            4: begin Settings.DisplayMode := adImage; Settings.Shape := asImage; end;
+            6: Settings := AquaPresetSettings(apVortex);
+          end;
+        end;
+        if ParamStr(6) <> '' then ReadBenchmarkAlias(ParamStr(6), Settings);
+        Obj.Flag := 0;
+        if (Settings.DisplayMode = adBackground) and (Scenario <> 8) then
+          Obj.Flag := OBJECT_FLAG_FILTER_OBJECT;
+        Scene.Width := Obj.Width; Scene.Height := Obj.Height;
+        SetLength(HostInput, Obj.Width * Obj.Height);
+        for I := 0 to High(HostInput) do HostInput[I] := Source[I mod Length(Source)];
+        PFILTER_ITEM_SELECT(FindItem(Table, '表示モード', 'select'))^.Value := Ord(Settings.DisplayMode);
+        PFILTER_ITEM_SELECT(FindItem(Table, '水面形状', 'select'))^.Value := Ord(Settings.Shape);
+        PFILTER_ITEM_COLOR(FindItem(Table, '液体色', 'color'))^.R := (Settings.ColorRGB shr 16) and $FF;
+        PFILTER_ITEM_COLOR(FindItem(Table, '液体色', 'color'))^.G := (Settings.ColorRGB shr 8) and $FF;
+        PFILTER_ITEM_COLOR(FindItem(Table, '液体色', 'color'))^.B := Settings.ColorRGB and $FF;
+        PFILTER_ITEM_COLOR(FindItem(Table, '油膜色', 'color'))^.R := (Settings.OilColorRGB shr 16) and $FF;
+        PFILTER_ITEM_COLOR(FindItem(Table, '油膜色', 'color'))^.G := (Settings.OilColorRGB shr 8) and $FF;
+        PFILTER_ITEM_COLOR(FindItem(Table, '油膜色', 'color'))^.B := Settings.OilColorRGB and $FF;
+        for Track := Low(TAquaTrack) to High(TAquaTrack) do
+          PFILTER_ITEM_TRACK(FindItem(Table, string(AQUA_TRACK_DEFINITIONS[Track].Name), 'track'))^.Value := Settings.Tracks[Track];
+        Obj.Time := 0;
+        Table^.Func_Proc_Video(@Video);
+        Sum := 0;
+        for I := 0 to FrameCount - 1 do
+        begin
+          Obj.Time := I / 30;
+          SetCount := 0; Timer := TStopwatch.StartNew;
+          Check(Table^.Func_Proc_Video(@Video) = 1, 'Benchmark callback');
+          Samples[I] := Timer.Elapsed.TotalMilliseconds; Sum := Sum + Samples[I];
+          Check((SetCount = 1) and (Length(Captured) = Obj.Width * Obj.Height), 'Benchmark output');
+        end;
+        for I := 0 to FrameCount - 2 do
+          for J := I + 1 to FrameCount - 1 do
+            if Samples[J] < Samples[I] then
+            begin Swap := Samples[I]; Samples[I] := Samples[J]; Samples[J] := Swap; end;
+        Obj.Time := 1;
+        Table^.Func_Proc_Video(@Video);
+        SavePNG(Captured, Obj.Width, Obj.Height, Names[Scenario] + '.png');
+        ImagePath := ImageDirectory + Names[Scenario] + '.png';
+        Digest := THashSHA2.GetHashStringFromFile(ImagePath);
+        CSV.Add(Format('%s,%d,%d,%d,%.3f,%.3f,%.3f,%.3f,%s',
+          [Names[Scenario], Obj.Width, Obj.Height, FrameCount, Samples[FrameCount div 2],
+           Sum / FrameCount, Samples[0], Samples[FrameCount - 1], Digest], TFormatSettings.Invariant));
+        Writeln(Names[Scenario], ': median ', Samples[FrameCount div 2]:0:2, ' ms');
+        // Optional offline frames avoid repeated seeks in the user's live editor.
+        if ParamStr(7) = '--frames' then
+          for I := 0 to 17 do
+          begin
+            Obj.Time := I / 6;
+            Check(Table^.Func_Proc_Video(@Video) = 1, 'Offline frame callback');
+            SavePNG(Captured, Obj.Width, Obj.Height, Format('%s_%0.2d.png', [Names[Scenario], I]));
+          end;
+      end;
+    finally
+      Table^.Func_Destroy(900, Video.UserData);
+    end;
+    Uninitialize;
+    Check(CSV.Count > 1, 'Unknown benchmark case');
+    CSV.SaveToFile(ImageDirectory + 'benchmark.csv', TEncoding.UTF8);
+  finally
+    FreeLibrary(Module); CSV.Free;
+  end;
+end;
+
 begin
   try
     ImageDirectory := IncludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0))) + 'Images\';
@@ -732,15 +1111,22 @@ begin
     PluginPath := ParamStr(1);
     if PluginPath = '' then PluginPath := 'C:\ProgramData\aviutl2\Plugin\SYNC_AquaFX\SYNC_AquaFX.auf2';
     ForceDirectories(ImageDirectory);
-    if ParamStr(3) <> '--previews-only' then
+    if ParamStr(3) = '--benchmark' then
+      BenchmarkPlugin(PluginPath, ParamStr(4))
+    else
     begin
-      VerifyProjection;
-      VerifyRenderer;
-      VerifyOilRenderer;
-      VerifyPlugin(PluginPath);
-      Writeln('ALL TESTS PASSED');
+      if ParamStr(3) <> '--previews-only' then
+      begin
+        VerifyProjection;
+        VerifyVortexFlow;
+        VerifyDropRipples;
+        VerifyRenderer;
+        VerifyOilRenderer;
+        VerifyPlugin(PluginPath);
+        Writeln('ALL TESTS PASSED');
+      end;
+      ExportNativePresets(PluginPath);
     end;
-    ExportNativePresets(PluginPath);
   except
     on E: Exception do
     begin

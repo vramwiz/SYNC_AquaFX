@@ -1,7 +1,11 @@
 ﻿param(
     [string]$PluginPath = 'C:\ProgramData\aviutl2\Plugin\SYNC_AquaFX\SYNC_AquaFX.auf2',
     [string]$ImageDirectory,
-    [switch]$PreviewsOnly
+    [switch]$PreviewsOnly,
+    [switch]$Benchmark,
+    [string]$BenchmarkImage = (Join-Path $PSScriptRoot '..\Sample\ramen.png'),
+    [string]$BenchmarkCase,
+    [string]$BenchmarkAlias
 )
 
 # 本番AUF2を読み込む検査EXEをビルド・実行する。追加プラグインは作成しない。
@@ -22,7 +26,13 @@ try {
         "-U$libraryDir;$libraryDir\JA" "-E$outputDir" "-NU$dcuDir" 'AquaFX_RenderTests.dpr'
     if ($LASTEXITCODE -ne 0) { throw 'Verification build failed.' }
     $testArguments = @($PluginPath, $ImageDirectory)
-    if ($PreviewsOnly) { $testArguments += '--previews-only' }
+    if ($Benchmark) { $testArguments += @('--benchmark', $BenchmarkImage) }
+    elseif ($PreviewsOnly) { $testArguments += '--previews-only' }
+    if ($Benchmark -and $BenchmarkCase) { $testArguments += $BenchmarkCase }
+    if ($Benchmark -and $BenchmarkAlias) {
+        if (-not $BenchmarkCase) { throw 'BenchmarkAlias requires BenchmarkCase.' }
+        $testArguments += $BenchmarkAlias
+    }
     & (Join-Path $outputDir 'AquaFX_RenderTests.exe') @testArguments
     if ($LASTEXITCODE -ne 0) { throw 'Render regression tests failed.' }
 }

@@ -1,0 +1,7 @@
+Generator: built-in image_gen
+Generated: 2026-11-16 (Asia/Tokyo)
+Purpose: unprocessed source image for AI MIRAI / SYNC_AquaFX verification.
+
+Use case: photorealistic-natural
+Asset type: a source sample image for testing a Japanese ramen-soup oil-surface video effect.
+Primary request: Create one realistic photograph of a bowl of shoyu ramen on a plain wooden table. Landscape 3:2 composition, about 1200 x 800. The entire circular white ceramic bowl is visible, centered, photographed from a high angle so the soup forms a broad nearly circular ellipse. Transparent amber-brown broth occupies a large continuous open area, particularly the front half of the bowl. A small portion of noodles, two pieces of chashu, half a soft-boiled egg and chopped green onions occupy the back part; do not cover most of the soup. Keep the broth surface relatively calm with restrained natural reflections and very little existing oil, so an added animated oil-film effect is easy to evaluate. Sharp natural food textures, soft daylight, moderate depth of field across the whole bowl. No steam obscuring the soup, no cutlery covering it, no people, no text, no logos, no watermark. This image must depict the unprocessed source before any artificial effect; do not add graphic overlays or exaggerated ripples.

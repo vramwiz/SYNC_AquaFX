@@ -14,6 +14,8 @@ uses
   AquaFX_Settings in 'Source\Common\AquaFX_Settings.pas',
   AquaFX_OilSurface in 'Source\Common\AquaFX_OilSurface.pas',
   AquaFX_Projection in 'Source\Common\AquaFX_Projection.pas',
+  AquaFX_Flow in 'Source\Common\AquaFX_Flow.pas',
+  AquaFX_Profiling in 'Source\Common\AquaFX_Profiling.pas',
   AquaFX_Renderer in 'Source\Common\AquaFX_Renderer.pas',
   AquaFX_Parameters in 'Source\Plugin\Filter\AquaFX_Parameters.pas',
   SYNC_AquaFX_FilterPlugin in 'Source\Plugin\Filter\SYNC_AquaFX_FilterPlugin.pas';
