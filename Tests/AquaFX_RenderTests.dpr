@@ -13,6 +13,8 @@ uses
   Vcl.Imaging.pngimage,
   AviUtl2FilterTypes in '..\Source\Lib\AviUtl2FilterTypes.pas',
   AquaFX_Settings in '..\Source\Common\AquaFX_Settings.pas',
+  AquaFX_SurfaceShape in '..\Source\Common\AquaFX_SurfaceShape.pas',
+  AquaFX_Flush in '..\Source\Common\AquaFX_Flush.pas',
   AquaFX_OilSurface in '..\Source\Common\AquaFX_OilSurface.pas',
   AquaFX_Projection in '..\Source\Common\AquaFX_Projection.pas',
   AquaFX_Flow in '..\Source\Common\AquaFX_Flow.pas',
@@ -919,13 +921,16 @@ begin
       begin
         Preset^.Value := I;
         Button^.Callback2(@Edit, Pointer(1234), '水面演出:2', '設定');
+        if I = Ord(apFlush) then begin Obj.Frame := 90; Obj.FrameTotal := 241; end;
         SetCount := 0; Table^.Func_Proc_Video(@Video);
         Check(SetCount = 1, 'Preset did not produce a frame');
-        Check(Captured[102 * 204 + 102].A > 0, 'Preset surface is invisible');
+        if I <> Ord(apFlush) then
+          Check(Captured[102 * 204 + 102].A > 0, 'Preset surface is invisible');
         for J := 0 to I - 1 do
           Check(not Same(PresetImages[J], Captured), 'Preset images are identical');
         PresetImages[I] := Copy(Captured);
       end;
+      Obj.Frame := 0; Obj.FrameTotal := 0;
       // 通常の画像へのフィルターでは透明部分を維持する。
       begin
         Obj.Flag := 0; Obj.Width := 204; Obj.Height := 204;
@@ -990,6 +995,7 @@ begin
         PFILTER_ITEM_SELECT(FindItem(Table, 'プリセット', 'select'))^.Value := I;
         PFILTER_ITEM_BUTTON(FindItem(Table, '設定', 'button'))^.Callback2(
           @Edit, Pointer(1234), '水面演出:2', '設定');
+        if I = Ord(apFlush) then begin Obj.Frame := 90; Obj.FrameTotal := 241; end;
         SetCount := 0; Table^.Func_Proc_Video(@Video);
         Check((SetCount = 1) and (CaptureWidth = 640) and (CaptureHeight = 360), 'Preview frame');
         SavePNG(Captured, 640, 360, Format('preset_%.2d.png', [I]));

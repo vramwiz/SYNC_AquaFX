@@ -36,6 +36,7 @@ var
   VortexGroup, VortexGroupEnd: TFILTER_ITEM_GROUP;
   ShoreGroup, ShoreGroupEnd: TFILTER_ITEM_GROUP;
   DrainGroup, DrainGroupEnd: TFILTER_ITEM_GROUP;
+  FlushGroup, FlushGroupEnd: TFILTER_ITEM_GROUP;
 
 procedure ApplyPreset(Edit: PEDIT_SECTION; Obj: OBJECT_HANDLE;
   Effect, Item: PWideChar); cdecl;
@@ -170,6 +171,12 @@ begin
       Settings.Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].MinValue,
       AQUA_TRACK_DEFINITIONS[Track].MaxValue, AQUA_TRACK_DEFINITIONS[Track].Step);
   AddGroup(DrainGroupEnd, '', 1);
+  AddGroup(FlushGroup, '角丸・トイレの流水', 1);
+  for Track := atCornerRoundness to atFlushStop do
+    AddTrack(Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].Name,
+      Settings.Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].MinValue,
+      AQUA_TRACK_DEFINITIONS[Track].MaxValue, AQUA_TRACK_DEFINITIONS[Track].Step);
+  AddGroup(FlushGroupEnd, '', 1);
 end;
 
 function ReadAquaFXSettings: TAquaSettings;

@@ -12,6 +12,8 @@ uses
   AviUtl2FilterTypes in 'Source\Lib\AviUtl2FilterTypes.pas',
   PluginFilterTable in 'Source\Lib\FilterTable\PluginFilterTable.pas',
   AquaFX_Settings in 'Source\Common\AquaFX_Settings.pas',
+  AquaFX_SurfaceShape in 'Source\Common\AquaFX_SurfaceShape.pas',
+  AquaFX_Flush in 'Source\Common\AquaFX_Flush.pas',
   AquaFX_OilSurface in 'Source\Common\AquaFX_OilSurface.pas',
   AquaFX_Projection in 'Source\Common\AquaFX_Projection.pas',
   AquaFX_Flow in 'Source\Common\AquaFX_Flow.pas',

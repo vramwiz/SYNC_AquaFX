@@ -11,6 +11,7 @@
 | shore_sand.png | 平面の海岸の寄せ返し | shore_sand_preview.gif | 1560～1919（2層） |
 | bathtub.png | 排水口へ水が集まって抜ける | bath_drain_preview.gif | 1920～2159（2層） |
 | 素材なし | 中央が凹む渦 | vortex_depression_verified.png（実機静止画） | 2160～2339 |
+| toilet_empty.png | 角丸の溜まり水＋内周からの流水 | toilet_flush_preview.gif | 2340～2579（2層） |
 
 `*_alias.txt` はAI MIRAI経由の配置に使う完全な保存値です。画像のパスはこの開発環境の絶対パスなので、別環境では修正してください。牛乳の現在の「画像の陰影」は0です。コーヒー・ラーメンはユーザー確認済み、牛乳は及第点の評価です。
 
@@ -35,3 +36,11 @@ GIFは本番AUF2の描画結果から作成しています。浴槽と最終牛�
 ユーザーの評価に合わせ、吸い込む動きを保って白い螺旋の輪と泡を取り除き、中央の影を薄くしました。渦と排水のサンプルは波紋の量・泡の量とも0です。この光沢だけの調整時には、排水96フレームのアルファが一致しました。
 
 さらに終盤を、濃さを保った水の尾が栓へ流れ込む表現に変更しています。現在のGIFと `bath_drain_phases.png` はこの変更後です。`bath_drain_tail.png` は終盤のオフライン合成、`bath_drain_tail_verified.png` は同じ終盤の実機画像です。前半58フレームは変更前と画像が完全一致し、設定値とタイムラインの長さは維持しています。
+
+`toilet_empty.png` は内蔵image_genで生成した1254×1254の空の便器です。水・水膜・泡は画像に含めず、生成指示は `toilet_empty.prompt.txt` に保存しています。下側の「栓を抜く」は「角丸の四角」「画像に水面」で背景と溜まり水をまとめ、上側の「トイレの水を流す」は「背景あり」で流水だけを返します。2つとも同じ画像を使用し、標準描画82%で表示します。
+
+下側の水面はX=-2、Y=65、拡大率39、縦横比-45、透明度55。上側はX=-2、Y=10、拡大率74、縦横比-12、透明度0です。両方とも角の丸み65、排水口は元画像中心からX=-7、Y=-97へ合わせます。流水の量100・幅65・給水終了65で、給水後も内側の水が排水口へ進みます。完全な生成値は `toilet_pool_alias.txt` / `toilet_flush_alias.txt` です。
+
+初稿は水膜が薄く流れが目立たなかったため、ユーザーが評価した動きを保ち、水膜の厚みと水色を強めました。上層の流水量を80から100、液体色をAACED6から83C5D2へ変更し、下層の溜まり水は維持しています。現在のGIF・PNG・エイリアスはこの水量調整後です。
+
+`toilet_flush_preview.gif` は本番AUF2の2回の描画を合成した768×768・96フレーム・8秒のプレビューで、GIF表示は480×480・12fpsです。`toilet_flush_phases.png` は4段階、`toilet_flush_preview.png` は2秒付近の合成、`toilet_flush_mirai_verified.png` はAI MIRAIから取得した1920×1080の実機画像です。再生成は `Tests/run_tests.ps1 -ToiletPreview -ImageDirectory <絶対パス>` とWindows PowerShell 5.1の `Tests/make_toilet_preview.ps1 -FramesDirectory <絶対パス>` を使います。エイリアスの再生成は `Tests/make_toilet_aliases.ps1` です。試作の見た目を判断するためのもので、GIFの生成時間はAviUtl2の再生性能を示しません。

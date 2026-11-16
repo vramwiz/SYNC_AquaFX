@@ -18,7 +18,7 @@ type
   TAquaVortexSurface = record
   private
     FCU, FCV, FMX, FMY, FRadius, FDepth, FPull, FPhase, FRemaining, FProgress: Double;
-    FDrain, FSpinDirection: Double;
+    FDrain, FSpinDirection, FCornerRoundness: Double;
     FPoolSize, FPoolRound, FOpening, FInverseRadiusSquared: Double;
     FLate, FLongScale, FSideScale, FDirectionX, FDirectionY, FTransportU, FTransportV: Double;
     FUpstreamReach, FStreamShape: Double;
@@ -43,7 +43,7 @@ function AquaObjectProgress(const Obj: TOBJECT_INFO): Double;
 implementation
 
 uses
-  System.Math;
+  System.Math, AquaFX_SurfaceShape;
 
 function Clamp01(X: Double): Double; inline;
 begin
@@ -75,6 +75,7 @@ begin
   Result.FCU := CU; Result.FCV := CV;
   Result.FMX := Max(0.01, MX); Result.FMY := Max(0.01, MY);
   Result.FShape := Settings.Shape;
+  Result.FCornerRoundness := Settings.Tracks[atCornerRoundness] * 0.01;
   Result.FDrain := Settings.Tracks[atDrainAmount] * 0.01;
   Result.FProgress := Clamp01(Progress);
   Result.FRemaining := 1 - Result.FDrain * Smooth(0, 1, Result.FProgress);
@@ -159,6 +160,8 @@ begin
     end;
     Norm := Max(A, B);
     if FShape = asEllipse then Norm := Sqrt(A * A + B * B)
+    else if FShape = asRoundedRectangle then
+      Norm := 1 + AquaRoundedDistance(A, B, FCornerRoundness)
     else Norm := Norm + (Sqrt(A * A + B * B) - Norm) * FPoolRound;
     if FProgress > 0 then Result.Mask := 1 - Smooth(1 - Edge * 2, 1 + Edge * 2, Norm);
     if Result.Mask <= 0 then Exit;

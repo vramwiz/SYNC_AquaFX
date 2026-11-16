@@ -10,7 +10,7 @@ interface
 
 uses
   System.Threading, AviUtl2FilterTypes, AquaFX_Settings, AquaFX_OilSurface, AquaFX_Projection,
-  AquaFX_Shore, AquaFX_VortexSurface
+  AquaFX_Shore, AquaFX_VortexSurface, AquaFX_Flush
   {$IFDEF DEBUG}, AquaFX_Profiling{$ENDIF};
 
 type
@@ -44,10 +44,12 @@ type
     // 液面内の変形と光沢を元画像へ合成する。カップ等の範囲外と元アルファは保つ。
     procedure CompositeImageWaves(const Input: TAquaPixels;
       Width, Height, GridW, GridH: Integer; Opacity, Shading: Double; var Output: TAquaPixels);
-    // 生成した水面の色とアルファだけを合成する。画像色の再サンプリングは不要。
+    // 生成した水面を合成する。PreserveInputでは元の位置とアルファへ水の色だけを重ねる。
+    // 画像色の再サンプリングは不要。入力配列の内容は変更しない。
     procedure CompositeBackground(const Input: TAquaPixels;
       Width, Height, GridW, GridH: Integer; Opacity: Double;
-      const Projection: TAquaProjection; NeedsInputMask: Boolean; var Output: TAquaPixels);
+      const Projection: TAquaProjection; NeedsInputMask: Boolean; var Output: TAquaPixels;
+      PreserveInput: Boolean = False);
   public
     // 大きな液面で必要になったワーカーを所有し、SDKの破棄通知中に回収する。
     destructor Destroy; override;
@@ -58,7 +60,7 @@ type
     // Outputは呼出側所有の配列を指定サイズへ更新する。Inputや保存設定は変更しない。
     // ClipToInput=Trueでは投影後の入力アルファ内だけへ描き、無効サイズではOutputを空にする。
     // 「画像に油膜」は入力を移動せず油だけ合成する。透明度は油だけへ適用する。
-    // TimelineProgressはオブジェクト先頭0～最終フレーム1。排水だけに使用する。
+    // TimelineProgressはオブジェクト先頭0～最終フレーム1。排水・流水の進行に使用する。
     procedure Render(const Input: TAquaPixels; Width, Height: Integer;
       Time: Double; const Settings: TAquaSettings; ClipToInput: Boolean;
       var Output: TAquaPixels; TimelineProgress: Double = 0);
@@ -70,7 +72,7 @@ const
 implementation
 
 uses
-  System.Math, System.Classes, System.SysUtils, AquaFX_Flow;
+  System.Math, System.Classes, System.SysUtils, AquaFX_Flow, AquaFX_SurfaceShape;
 
 const
   LUT_SIZE = 8192;
@@ -291,14 +293,16 @@ end;
 
 procedure TAquaRenderer.CompositeBackground(const Input: TAquaPixels;
   Width, Height, GridW, GridH: Integer; Opacity: Double;
-  const Projection: TAquaProjection; NeedsInputMask: Boolean; var Output: TAquaPixels);
+  const Projection: TAquaProjection; NeedsInputMask: Boolean; var Output: TAquaPixels;
+  PreserveInput: Boolean);
 var
   Left, Top, Right, Bottom, Row, I: Integer;
   Opaque: Boolean;
   Source, Destination: TAquaPixels;
   RenderRow: TProc<Integer>;
 begin
-  FillChar(Output[0], Length(Output) * SizeOf(TPIXEL_RGBA), 0);
+  if PreserveInput then Move(Input[0], Output[0], Length(Output) * SizeOf(TPIXEL_RGBA))
+  else FillChar(Output[0], Length(Output) * SizeOf(TPIXEL_RGBA), 0);
   if NeedsInputMask and (Length(Input) <> Width * Height) then Exit;
   if not SurfaceBounds(Width, Height, GridW, GridH, Left, Top, Right, Bottom) then Exit;
   Opaque := True;
@@ -342,6 +346,17 @@ begin
       end;
       Alpha := S.Mask * Opacity;
       if NeedsInputMask then Alpha := Alpha * SourcePixel.A / 255;
+      if PreserveInput then
+      begin
+        // 元画像は固定し、同じ画素のRGBへ水面だけを合成する。元アルファを保存する。
+        Pixel := Source[Y * Width + X];
+        if (Pixel.A = 0) or (Alpha <= 0) then Continue;
+        Pixel.R := ColorByte(Lerp(Pixel.R / 255, S.R, Alpha));
+        Pixel.G := ColorByte(Lerp(Pixel.G / 255, S.G, Alpha));
+        Pixel.B := ColorByte(Lerp(Pixel.B / 255, S.B, Alpha));
+        Destination[Y * Width + X] := Pixel;
+        Continue;
+      end;
       Pixel := Default(TPIXEL_RGBA); Pixel.A := ColorByte(Alpha);
       if Pixel.A > 0 then
       begin Pixel.R := ColorByte(S.R); Pixel.G := ColorByte(S.G); Pixel.B := ColorByte(S.B); end;
@@ -442,7 +457,7 @@ var
   GridW, GridH, Step, GX, GY, X, Y, Index, I, RippleCount: Integer;
   IX, IY, NX, NY, BaseIndex: Integer;
   HasInput, NeedsInputMask, HasOil, KeepOilGrid, IsOilOverlay, IsWaveOverlay, IsOverlay, HasVortex: Boolean;
-  HasVortexSurface: Boolean;
+  HasVortexSurface, IsWaterOverlay: Boolean;
   Projection: TAquaProjection;
   OilSurface: TAquaOilSurface;
   FlowField: TAquaFlowField;
@@ -450,6 +465,8 @@ var
   ShoreSample: TAquaShoreSample;
   VortexSurface: TAquaVortexSurface;
   VortexSample: TAquaVortexSample;
+  Flush: TAquaFlush;
+  FlushSample: TAquaFlushSample;
   VortexCU, VortexCV, MetricX, MetricY, OriginX, OriginY, PointX, PointY, MetricBase: Double;
   OilSample, OilA, OilB: TAquaOilSample;
   Seed, T, Viscosity, Strength, Detail, Flow, FlowAngle: Double;
@@ -482,7 +499,8 @@ begin
   SetLength(Output, Width * Height);
   IsOilOverlay := Settings.DisplayMode = adOilOverlay;
   IsWaveOverlay := Settings.DisplayMode = adWaveOverlay;
-  IsOverlay := IsOilOverlay or IsWaveOverlay;
+  IsWaterOverlay := Settings.DisplayMode = adWaterOverlay;
+  IsOverlay := IsOilOverlay or IsWaveOverlay or IsWaterOverlay;
   if IsOverlay and (not HasInput) then
   begin
     FillChar(Output[0], Length(Output) * SizeOf(TPIXEL_RGBA), 0);
@@ -503,11 +521,12 @@ begin
   end;
   if IsNan(Time) or IsInfinite(Time) then Time := 0;
   T := EnsureRange(Time, -1.0E9, 1.0E9);
+  if IsNan(TimelineProgress) or IsInfinite(TimelineProgress) then TimelineProgress := 0;
   HasVortexSurface := (Settings.Tracks[atVortexDepth] > 0) or
     (Settings.Tracks[atVortexPull] > 0) or (Settings.Tracks[atDrainAmount] > 0);
   VortexCU := 0; VortexCV := 0; MetricX := 1; MetricY := 1;
   if HasVortexSurface or (Settings.Tracks[atVortexCenterX] <> 0) or
-    (Settings.Tracks[atVortexCenterY] <> 0) then
+    (Settings.Tracks[atVortexCenterY] <> 0) or (Settings.Shape = asFlush) then
   begin
     Projection.ScreenToSurface(Width * 0.5 + Settings.Tracks[atVortexCenterX],
       Height * 0.5 + Settings.Tracks[atVortexCenterY], VortexCU, VortexCV);
@@ -533,6 +552,8 @@ begin
     end;
   end;
   if Settings.Shape = asShore then Shore := TAquaShore.Create(Settings, T);
+  if Settings.Shape = asFlush then
+    Flush := TAquaFlush.Create(Settings, T, TimelineProgress, VortexCU, VortexCV);
   Seed := Settings.Tracks[atSeed];
   Viscosity := Settings.Tracks[atViscosity] * 0.01;
   Strength := Settings.Tracks[atWaveStrength] * 0.01;
@@ -643,6 +664,14 @@ begin
         Mask := Saturate((1 - Max(Abs(RotU), Abs(RotV))) / Edge + 0.5)
       else if Settings.Shape = asEllipse then
         Mask := Saturate((1 - Sqrt(Sqr(RotU) + Sqr(RotV))) / Edge + 0.5);
+      if Settings.Shape = asRoundedRectangle then
+        Mask := Saturate(-AquaRoundedDistance(RotU, RotV,
+          Settings.Tracks[atCornerRoundness] * 0.01) / Edge + 0.5);
+      if Settings.Shape = asFlush then
+      begin
+        FlushSample := Flush.Sample(RotU, RotV, Edge);
+        Mask := FlushSample.Coverage;
+      end;
       if Settings.Shape = asShore then
       begin
         if FShoreColumns[GX].U <> RotU then
@@ -750,6 +779,12 @@ begin
         if Settings.Shape = asShore then
           ShoreSample.Composite(S.R, S.G, S.B, S.Mask, S.Light,
             Settings.DisplayMode = adEffectsOnly);
+        if Settings.Shape = asFlush then
+        begin
+          S.R := Saturate(S.R * FlushSample.Shade + FlushSample.Light);
+          S.G := Saturate(S.G * FlushSample.Shade + FlushSample.Light);
+          S.B := Saturate(S.B * FlushSample.Shade + FlushSample.Light);
+        end;
       end;
       FGrid[GY * GridW + GX] := S;
     end;
@@ -770,10 +805,10 @@ begin
       Saturate(Settings.Tracks[atImageShading] * 0.01), Output);
     Exit;
   end;
-  if Settings.DisplayMode = adBackground then
+  if (Settings.DisplayMode = adBackground) or IsWaterOverlay then
   begin
     CompositeBackground(Input, Width, Height, GridW, GridH, Opacity,
-      Projection, NeedsInputMask, Output);
+      Projection, NeedsInputMask, Output, IsWaterOverlay);
     Exit;
   end;
   for Y := 0 to Height - 1 do
@@ -830,7 +865,7 @@ begin
           Pixel.G := ColorByte((240 / 255 * S.Light * (1 - OilSample.Alpha) + OilSample.G * OilSample.Alpha) / OverlayAlpha);
           Pixel.B := ColorByte((S.Light * (1 - OilSample.Alpha) + OilSample.B * OilSample.Alpha) / OverlayAlpha);
         end;
-        if Settings.Shape = asShore then
+        if Settings.Shape in [asShore, asFlush] then
         begin
           Pixel.R := ColorByte(S.R); Pixel.G := ColorByte(S.G); Pixel.B := ColorByte(S.B);
         end;
