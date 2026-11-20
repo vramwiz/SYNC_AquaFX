@@ -33,6 +33,10 @@ var
   SettingsButton: TFILTER_ITEM_BUTTON;
   PlacementGroup, PlacementGroupEnd: TFILTER_ITEM_GROUP;
   OilGroup, OilGroupEnd: TFILTER_ITEM_GROUP;
+  VortexGroup, VortexGroupEnd: TFILTER_ITEM_GROUP;
+  ShoreGroup, ShoreGroupEnd: TFILTER_ITEM_GROUP;
+  DrainGroup, DrainGroupEnd: TFILTER_ITEM_GROUP;
+  FlushGroup, FlushGroupEnd: TFILTER_ITEM_GROUP;
 
 procedure ApplyPreset(Edit: PEDIT_SECTION; Obj: OBJECT_HANDLE;
   Effect, Item: PWideChar); cdecl;
@@ -73,7 +77,8 @@ begin
     for Track := Low(TAquaTrack) to High(TAquaTrack) do
     begin
       // 乱数の再現条件、表示モード、利用者の配置はプリセットで変更しない。
-      if (Track = atSeed) or (Track in AQUA_PLACEMENT_TRACKS) then Continue;
+      if (Track = atSeed) or (Track in AQUA_PLACEMENT_TRACKS) or
+        (Track in AQUA_VORTEX_PLACEMENT_TRACKS) then Continue;
       Text := UTF8String(FloatToStr(Preset.Tracks[Track], TFormatSettings.Invariant));
       SetItem(Tracks[Track].Name, Text);
       Tracks[Track].Value := Preset.Tracks[Track];
@@ -131,6 +136,20 @@ begin
       AQUA_TRACK_DEFINITIONS[Track].MaxValue,
       AQUA_TRACK_DEFINITIONS[Track].Step);
 
+  AddTrack(Tracks[atImageShading], AQUA_TRACK_DEFINITIONS[atImageShading].Name,
+    Settings.Tracks[atImageShading], 0, 100, 1);
+  for Track := atRippleScatter to atRippleAspect do
+    AddTrack(Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].Name,
+      Settings.Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].MinValue,
+      AQUA_TRACK_DEFINITIONS[Track].MaxValue, AQUA_TRACK_DEFINITIONS[Track].Step);
+
+  AddGroup(VortexGroup, '渦', 1);
+  for Track := atVortexStrength to atVortexRadius do
+    AddTrack(Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].Name,
+      Settings.Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].MinValue,
+      AQUA_TRACK_DEFINITIONS[Track].MaxValue, AQUA_TRACK_DEFINITIONS[Track].Step);
+  AddGroup(VortexGroupEnd, '', 1);
+
   AddGroup(OilGroup, '表面の油', 1);
   AddColor(OilColor, '油膜色', Byte(Settings.OilColorRGB and $FF),
     Byte((Settings.OilColorRGB shr 8) and $FF), Byte((Settings.OilColorRGB shr 16) and $FF));
@@ -139,6 +158,25 @@ begin
       Settings.Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].MinValue,
       AQUA_TRACK_DEFINITIONS[Track].MaxValue, AQUA_TRACK_DEFINITIONS[Track].Step);
   AddGroup(OilGroupEnd, '', 1);
+  AddGroup(ShoreGroup, '海岸の寄せ返し', 1);
+  for Track := atShoreReach to atShoreFoamLife do
+    AddTrack(Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].Name,
+      Settings.Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].MinValue,
+      AQUA_TRACK_DEFINITIONS[Track].MaxValue, AQUA_TRACK_DEFINITIONS[Track].Step);
+  AddGroup(ShoreGroupEnd, '', 1);
+  // 既存項目の登録順を維持し、新しい保存項目は末尾へ追加する。
+  AddGroup(DrainGroup, '渦の凹み・排水', 1);
+  for Track := atVortexCenterX to atDrainAmount do
+    AddTrack(Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].Name,
+      Settings.Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].MinValue,
+      AQUA_TRACK_DEFINITIONS[Track].MaxValue, AQUA_TRACK_DEFINITIONS[Track].Step);
+  AddGroup(DrainGroupEnd, '', 1);
+  AddGroup(FlushGroup, '角丸・トイレの流水', 1);
+  for Track := atCornerRoundness to atFlushStop do
+    AddTrack(Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].Name,
+      Settings.Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].MinValue,
+      AQUA_TRACK_DEFINITIONS[Track].MaxValue, AQUA_TRACK_DEFINITIONS[Track].Step);
+  AddGroup(FlushGroupEnd, '', 1);
 end;
 
 function ReadAquaFXSettings: TAquaSettings;

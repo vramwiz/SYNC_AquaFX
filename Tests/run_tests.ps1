@@ -1,7 +1,14 @@
 ﻿param(
     [string]$PluginPath = 'C:\ProgramData\aviutl2\Plugin\SYNC_AquaFX\SYNC_AquaFX.auf2',
     [string]$ImageDirectory,
-    [switch]$PreviewsOnly
+    [switch]$PreviewsOnly,
+    [switch]$ShorePreview,
+    [switch]$DrainPreview,
+    [switch]$ToiletPreview,
+    [switch]$Benchmark,
+    [string]$BenchmarkImage = (Join-Path $PSScriptRoot '..\Sample\ramen.png'),
+    [string]$BenchmarkCase,
+    [string]$BenchmarkAlias
 )
 
 # 本番AUF2を読み込む検査EXEをビルド・実行する。追加プラグインは作成しない。
@@ -18,12 +25,35 @@ $studioDir = Split-Path -Parent (Split-Path -Parent $compiler)
 $libraryDir = Join-Path $studioDir 'lib\Win64\release'
 Push-Location $PSScriptRoot
 try {
+    if ($ToiletPreview) {
+        & $compiler '--no-config' '-B' '-Q' '-TX.exe' '-$R+' '-$Q+' '-NSSystem;Winapi;Vcl' `
+            "-U$libraryDir;$libraryDir\JA" "-E$outputDir" "-NU$dcuDir" 'AquaFX_ToiletTests.dpr'
+        if ($LASTEXITCODE -ne 0) { throw 'Toilet verification build failed.' }
+        & (Join-Path $outputDir 'AquaFX_ToiletTests.exe') $PluginPath $ImageDirectory '--preview' (Join-Path $projectDir 'Sample\toilet_empty.png')
+        if ($LASTEXITCODE -ne 0) { throw 'Toilet preview failed.' }
+        return
+    }
     & $compiler '--no-config' '-B' '-Q' '-TX.exe' '-$R+' '-$Q+' '-NSSystem;Winapi;Vcl' `
         "-U$libraryDir;$libraryDir\JA" "-E$outputDir" "-NU$dcuDir" 'AquaFX_RenderTests.dpr'
     if ($LASTEXITCODE -ne 0) { throw 'Verification build failed.' }
     $testArguments = @($PluginPath, $ImageDirectory)
-    if ($PreviewsOnly) { $testArguments += '--previews-only' }
+    if ($Benchmark) { $testArguments += @('--benchmark', $BenchmarkImage) }
+    elseif ($PreviewsOnly) { $testArguments += '--previews-only' }
+    elseif ($ShorePreview) { $testArguments += '--shore-preview' }
+    elseif ($DrainPreview) { $testArguments += '--drain-preview' }
+    if ($Benchmark -and $BenchmarkCase) { $testArguments += $BenchmarkCase }
+    if ($Benchmark -and $BenchmarkAlias) {
+        if (-not $BenchmarkCase) { throw 'BenchmarkAlias requires BenchmarkCase.' }
+        $testArguments += $BenchmarkAlias
+    }
     & (Join-Path $outputDir 'AquaFX_RenderTests.exe') @testArguments
     if ($LASTEXITCODE -ne 0) { throw 'Render regression tests failed.' }
+    if (-not ($Benchmark -or $PreviewsOnly -or $ShorePreview -or $DrainPreview)) {
+        & $compiler '--no-config' '-B' '-Q' '-TX.exe' '-$R+' '-$Q+' '-NSSystem;Winapi;Vcl' `
+            "-U$libraryDir;$libraryDir\JA" "-E$outputDir" "-NU$dcuDir" 'AquaFX_ToiletTests.dpr'
+        if ($LASTEXITCODE -ne 0) { throw 'Toilet verification build failed.' }
+        & (Join-Path $outputDir 'AquaFX_ToiletTests.exe') $PluginPath $ImageDirectory
+        if ($LASTEXITCODE -ne 0) { throw 'Toilet regression tests failed.' }
+    }
 }
 finally { Pop-Location }

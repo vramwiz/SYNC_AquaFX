@@ -20,7 +20,8 @@ implementation
 
 uses
   System.SysUtils, System.SyncObjs, Winapi.Windows,
-  PluginFilterTable, AquaFX_Parameters, AquaFX_Renderer;
+  PluginFilterTable, AquaFX_Parameters, AquaFX_Renderer, AquaFX_Settings, AquaFX_VortexSurface
+  {$IFDEF DEBUG}, AquaFX_Profiling{$ENDIF};
 
 const
   EFFECT_NAME = '水面演出';
@@ -61,6 +62,10 @@ procedure TAquaSession.Render(Video: PFILTER_PROC_VIDEO);
 var
   Width, Height: Integer;
   FilterObject: Boolean;
+  Settings: TAquaSettings;
+  {$IFDEF DEBUG}
+  Profile: TAquaFrameProfile;
+  {$ENDIF}
 begin
   if not Assigned(Video^.SetImageData) then Exit;
   FilterObject := (Video^.Object_^.Flag and OBJECT_FLAG_FILTER_OBJECT) <> 0;
@@ -72,8 +77,13 @@ begin
   end;
   if (Width <= 0) or (Height <= 0) or (Width > 8192) or (Height > 8192) or
     (Int64(Width) * Height > AQUA_MAX_PIXELS) then Exit;
+  {$IFDEF DEBUG}
+  Profile := Default(TAquaFrameProfile);
+  Profile.Started := AquaProfileTick;
+  {$ENDIF}
   FLock.Acquire;
   try
+    {$IFDEF DEBUG}Profile.Locked := AquaProfileTick;{$ENDIF}
     if Assigned(Video^.GetImageData) and
       (Video^.Object_^.Width = Width) and (Video^.Object_^.Height = Height) then
     begin
@@ -81,13 +91,24 @@ begin
       Video^.GetImageData(@FInput[0]);
     end else
       SetLength(FInput, 0);
+    {$IFDEF DEBUG}Profile.InputDone := AquaProfileTick;{$ENDIF}
+    Settings := ReadAquaFXSettings;
+    {$IFDEF DEBUG}Profile.SettingsDone := AquaProfileTick;{$ENDIF}
     FRenderer.Render(FInput, Width, Height, Video^.Object_^.Time,
-      ReadAquaFXSettings, not FilterObject, FOutput);
+      Settings, not FilterObject, FOutput, AquaObjectProgress(Video^.Object_^));
+    {$IFDEF DEBUG}
+    Profile.RenderDone := AquaProfileTick;
+    Profile.Renderer := FRenderer.LastProfile;
+    {$ENDIF}
     if Length(FOutput) = Width * Height then
       Video^.SetImageData(@FOutput[0], Width, Height);
+    {$IFDEF DEBUG}Profile.OutputDone := AquaProfileTick;{$ENDIF}
   finally
     FLock.Release;
   end;
+  {$IFDEF DEBUG}
+  WriteAquaProfile(Profile, Width, Height, Ord(Settings.DisplayMode), Ord(Settings.Shape));
+  {$ENDIF}
 end;
 
 function AquaFXProcVideo(Video: PFILTER_PROC_VIDEO): Byte; cdecl;
@@ -126,7 +147,7 @@ begin
   if not PluginTableInitialized then
   begin
     SetupPluginTable(FILTER_FLAG_VIDEO or FILTER_FLAG_FILTER or FILTER_FLAG_USERDATA,
-      EFFECT_NAME, EFFECT_GROUP, '水面演出 / SYNC_AquaFX v0.5.0', AquaFXProcVideo, nil);
+      EFFECT_NAME, EFFECT_GROUP, '水面演出 / SYNC_AquaFX v0.6.0', AquaFXProcVideo, nil);
     RegisterAquaFXParameters;
     GetPluginTable^.Func_Create := AquaFXCreate;
     GetPluginTable^.Func_Destroy := AquaFXDestroy;
