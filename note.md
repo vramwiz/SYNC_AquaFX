@@ -127,3 +127,23 @@ cmd /c 'call "C:\Program Files (x86)\Embarcadero\Studio\37.0\bin\rsvars.bat" && 
 - この文書更新前後でZIPのSHA-256は `5602BDA712B7E253FD6D4936126FAF964CB021A5DD87D7ED1492F940860463E8` から `89EDF25603617D97BB429F204F779E0E34978D6C8B27BECBF98A91A3C803A723` へ変わった。
 - AUF2のSHA-256は `536BC21666617E8E4A574F1833DCE76978244D39E899021687682115C72203D4` で変わらない。格納AUF2のXXH3-128は `f452c856ef96343de19103bbb923b22a` で、今回の作業開始時のJSON末尾の値と一致したためJSONも変更していない。JSONのハッシュ対象はZIP全体ではなくAUF2本体。
 - 比較結果は `Win64/Verification/DocsReleaseBefore.json` / `DocsReleaseAfter.json` に記録した。
+
+## READMEを利用者向け説明に限定する
+
+- ユーザー指定により、ルート・配布用READMEにはビルド・確認／検査・ソース構成・ZIP作成方法・開発環境などの開発者向け説明を載せない。インストール、操作方法、利用上の制限、ライセンスを記載する。開発の手順と記録は本ノートへ残す。
+- 配布ZIPはRelease本体を配置後に `setup/make_release_zip.bat` で作成する。入力先は `%ProgramData%/aviutl2/Plugin/SYNC_AquaFX`、出力は `setup/SYNC_AquaFX.zip`。別の出力先を梱包する場合は `-ReleaseDirectory` を指定する。
+- xxhsum.exeは `Win64/Dependencies/xxHash-0.8.4` またはPATHへ用意する。別の場所にある場合はPS1へ `-XxhsumPath` を指定する。ツール不足時の案内先もREADMEから本ノートへ変更した。
+
+```powershell
+.\setup\make_release_zip.bat
+.\setup\make_release_zip.bat -ReleaseDirectory 'V:\DelphiProg\SYNC_AquaFX\Win64\BuildCheck\Release'
+.\setup\make_release_zip.ps1 -XxhsumPath 'C:\Tools\xxhsum.exe'
+```
+
+- README整理後にZIPを再生成し、全5ファイルを元ファイルと照合した。本番配置先のREADMEも更新済み。AUF2とJSONのSHA-256は作業開始時から変わらず、ZIPだけ更新された。
+
+## 公開版の履歴
+
+- ユーザー指定の公開済みバージョンは v1.0.0 の1件のみ。開発中に付けた v0.1.0～v0.5.0 を公開履歴として扱わない。カタログには実際の公開版だけを記載し、開発作業のたびに履歴を増やさない。
+- `setup/SYNC_AquaFX.catalog.json` の履歴を v1.0.0 のみに修正し、ルート・配布用READMEの版表記も揃えた。本体のバイナリは変更せず、配布ZIPを更新した。
+- ZIPに格納したAUF2のXXH3-128を再計算し、JSONの `f452c856ef96343de19103bbb923b22a` と一致することを確認した。

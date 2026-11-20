@@ -20,7 +20,7 @@ if (-not $XxhsumPath) {
     $XxhsumPath = Join-Path $projectDir 'Win64\Dependencies\xxHash-0.8.4\xxhsum.exe'
     if (-not (Test-Path -LiteralPath $XxhsumPath -PathType Leaf)) {
         $xxhsum = Get-Command xxhsum.exe -CommandType Application -ErrorAction SilentlyContinue
-        if (-not $xxhsum) { throw 'xxhsum.exe is required. See setup\README.md.' }
+        if (-not $xxhsum) { throw 'xxhsum.exe is required. See note.md (release ZIP instructions).' }
         $XxhsumPath = $xxhsum.Source
     }
 }
