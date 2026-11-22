@@ -1,7 +1,0 @@
-Generator: built-in image_gen
-Generated: 2026-11-16 (Asia/Tokyo)
-Purpose: unprocessed glass-of-milk source for AI MIRAI / SYNC_AquaFX verification.
-
-Use case: photorealistic-natural
-Asset type: unprocessed sample photograph for testing liquid-surface animation in a video plugin.
-Primary request: Create a realistic landscape 3:2 photograph, about 1536 x 1024, of one clear, wide cylindrical drinking glass filled almost to the top with milk, standing on a simple wooden table. Use a high three-quarter camera angle so the full oval milk surface is clearly visible and large enough to animate, while the entire transparent glass, thick rim, side walls and base remain in the frame. The milk is calm before animation, naturally off-white with gentle soft gray tonal variation from window lighting, preserving highlight detail instead of blown-out pure white. Include only a few tiny bubbles near one edge, providing subtle surface cues. Realistic glass reflections and refraction, a soft natural shadow on the table, no visible motion, no splashing, no artificial ripple or swirl effects. No spoon, straw, pouring stream, hands, people, text, logos or watermark. The side of the milk and all glass reflections should be stable source detail; this is an original image before any effect.

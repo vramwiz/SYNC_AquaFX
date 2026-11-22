@@ -1,7 +1,0 @@
-Generator: built-in image_gen
-Generated: 2026-11-16 (Asia/Tokyo)
-Purpose: unprocessed coffee source for AI MIRAI / SYNC_AquaFX verification.
-
-Use case: photorealistic-natural
-Asset type: unprocessed coffee sample image for testing a liquid-surface animation plugin.
-Primary request: A realistic landscape 3:2 photograph of a white ceramic coffee cup filled with dark brown black coffee, on a saucer on a plain wooden table. Photograph from a high three-quarter angle so a large, clearly visible oval coffee surface fills the center, with the whole cup, handle and saucer inside the frame. The coffee surface is calm and flat before animation; include a natural soft window reflection and a very thin irregular crema line near the inner rim, providing subtle visible texture for a wave-distortion test. Sharp cup rim and handle, natural soft daylight, realistic ceramic and coffee details. No spoon in the coffee, no hands, no heavy steam, no latte art, no text, no logos, no watermark, no artificial ripple or swirl effect. About 1536 x 1024 pixels. This is the original source image; keep the coffee still.

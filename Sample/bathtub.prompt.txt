@@ -1,3 +1,0 @@
-Generated with built-in image_gen, generate mode.
-Asset: dry bathtub background for animated water overlay, 1536x1024.
-Straight-down overhead photograph of a simple white rectangular bathtub, nearly square inner corners, broad flat empty pale-gray interior, subtle shadows, quiet gray tile surround. Entire tub visible. Completely dry: no water, stream, drops, ripples, foam, people, text, logos or watermark. Small drain near one end. The liquid surface and expanding ripples are supplied by SYNC_AquaFX.
