@@ -3,7 +3,7 @@
     "id": "VRAMWIZ.SYNC_AquaFX",
     "name": "水面演出",
     "type": "フィルタプラグイン",
-    "summary": "水系8種と14プリセット。黄色い下地の浮遊油膜、ラーメン画像へ照りを重ねる画像に油膜、両方向3D傾斜と座標調整",
+    "summary": "水面や油膜を描画。水の種類や波、傾きを調整できる",
     "description": "https://raw.githubusercontent.com/vramwiz/SYNC_AquaFX/refs/heads/main/README.md",
     "author": "VRAMの魔術師",
     "repoURL": "https://github.com/vramwiz/SYNC_AquaFX/",
@@ -21,9 +21,8 @@
       }
     ],
     "tags": [
-      "水面",
-      "油膜",
-      "映像演出"
+      "エフェクト",
+      "水面"
     ],
     "dependencies": [],
     "images": [],
