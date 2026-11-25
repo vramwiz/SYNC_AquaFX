@@ -179,7 +179,7 @@ begin
     if I >= Length(HostInput) div 2 then HostInput[I].A := 128;
   end;
   Video.GetImageData := GetImage;
-  Preset(apRain, adWaterOverlay); Frame(StartTime);
+  Preset(apRain, adImage); Frame(StartTime);
   Check(not Same(HostInput, Captured), 'Image overlay did not draw weather');
   for I := 0 to High(HostInput) do
   begin
@@ -189,8 +189,16 @@ begin
   end;
   Number(atWeatherAmount, 0); Frame(StartTime); Check(Same(HostInput, Captured), 'Disabled overlay changed input');
   Preset(apSnow, adEffectsOnly); Frame(StartTime);
-  Check(VisibleCount(Captured) > 0, 'Masked weather is empty');
-  for I := 0 to High(HostInput) do Check(Captured[I].A <= HostInput[I].A, 'Weather exceeded source alpha');
+  Check(not Same(HostInput, Captured), 'Effects mode did not draw weather');
+  for I := 0 to High(HostInput) do
+  begin
+    Check(Captured[I].A = HostInput[I].A, 'Weather effects changed input alpha');
+    if HostInput[I].A = 0 then Check(CompareMem(@Captured[I], @HostInput[I], SizeOf(TPIXEL_RGBA)),
+      'Weather effects changed transparent input pixels');
+  end;
+  Number(atWeatherAmount, 0); Frame(StartTime);
+  Check(Same(HostInput, Captured), 'Disabled weather effects changed input');
+  Number(atWeatherAmount, 75);
   Obj.Flag := OBJECT_FLAG_FILTER_OBJECT;
   FillChar(HostInput[0], Length(HostInput) * SizeOf(TPIXEL_RGBA), 0);
   Frame(StartTime); Check(VisibleCount(Captured) > 0, 'Transparent filter input blocked weather');

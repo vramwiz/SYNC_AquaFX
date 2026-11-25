@@ -405,7 +405,7 @@ var
   Frame: TWeatherFrame;
   LayoutSettings: TAquaSettings;
   Track: TAquaTrack;
-  HasInput, PreserveInput, MaskInput: Boolean;
+  HasInput, PreserveInput: Boolean;
   Opacity, Amount: Double;
   I, Alpha: Integer;
   Seed: Int64;
@@ -413,9 +413,20 @@ begin
   HasInput := Length(Input) = Length(Output);
   PreserveInput := (Settings.DisplayMode in [adImage, adOilOverlay, adWaveOverlay, adWaterOverlay]) or
     (ClipToInput and (Settings.DisplayMode = adBackground));
-  MaskInput := ClipToInput and (Settings.DisplayMode = adEffectsOnly);
+  // 画像付きのエフェクトは描画範囲外も含めて元画像を保つ。素材なしの単体配置は透過出力。
+  if HasInput and (Settings.DisplayMode = adEffectsOnly) then
+  begin
+    PreserveInput := ClipToInput;
+    if not PreserveInput then
+      for I := 0 to High(Input) do
+        if Input[I].A <> 0 then
+        begin
+          PreserveInput := True;
+          Break;
+        end;
+  end;
   FillChar(Output[0], Length(Output) * SizeOf(TPIXEL_RGBA), 0);
-  if (PreserveInput or MaskInput) and not HasInput then Exit;
+  if PreserveInput and not HasInput then Exit;
 
   Opacity := EnsureRange(1 - Settings.Tracks[atTransparency] * 0.01, 0.0, 1.0);
   Amount := EnsureRange(Settings.Tracks[atWeatherAmount] * 0.01, 0.0, 1.0);
@@ -446,7 +457,7 @@ begin
   end;
 
   // 全体の透明度と入力マスクは粒同士を重ねてから掛け、交差部分だけ濃くなるのを防ぐ。
-  if not (PreserveInput or MaskInput) and (Opacity = 1) then Exit;
+  if not PreserveInput and (Opacity = 1) then Exit;
   for I := 0 to High(Output) do
   begin
     Alpha := Round(Output[I].A * Opacity);
@@ -463,7 +474,6 @@ begin
     end
     else
     begin
-      if MaskInput then Alpha := (Alpha * Input[I].A + 127) div 255;
       if Alpha = 0 then Output[I] := Default(TPIXEL_RGBA) else Output[I].A := Alpha;
     end;
   end;

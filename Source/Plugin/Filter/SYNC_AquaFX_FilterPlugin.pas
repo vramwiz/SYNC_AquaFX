@@ -60,6 +60,15 @@ begin
   inherited;
 end;
 
+function HasVisiblePixels(const Pixels: TAquaPixels): Boolean;
+var
+  Pixel: TPIXEL_RGBA;
+begin
+  for Pixel in Pixels do
+    if Pixel.A <> 0 then Exit(True);
+  Result := False;
+end;
+
 procedure TAquaSession.Render(Video: PFILTER_PROC_VIDEO);
 var
   Width, Height: Integer;
@@ -95,6 +104,10 @@ begin
       SetLength(FInput, 0);
     {$IFDEF DEBUG}Profile.InputDone := AquaProfileTick;{$ENDIF}
     Settings := ReadAquaFXSettings;
+    // 素材なしで「背景」の画像形状を使う場合、内蔵の水面に外部のアルファは不要。
+    if FilterObject and (Settings.DisplayMode = adBackground) and (Settings.Shape = asImage) and
+      not HasVisiblePixels(FInput) then
+      Settings.Shape := asPlane;
     {$IFDEF DEBUG}Profile.SettingsDone := AquaProfileTick;{$ENDIF}
     FRenderer.Render(FInput, Width, Height, Video^.Object_^.Time,
       Settings, not FilterObject, FOutput, AquaObjectProgress(Video^.Object_^));

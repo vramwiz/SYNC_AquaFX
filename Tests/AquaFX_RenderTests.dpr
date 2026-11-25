@@ -81,6 +81,24 @@ begin
   raise Exception.Create('Missing standard item: ' + Name);
 end;
 
+procedure SetComponents(Table: PFILTER_PLUGIN_TABLE; Components: TAquaComponents);
+var
+  Component: TAquaComponent;
+begin
+  for Component := Low(TAquaComponent) to High(TAquaComponent) do
+    PFILTER_ITEM_CHECK(FindItem(Table, AQUA_COMPONENT_NAMES[Component], 'check'))^.Value :=
+      Ord(Component in Components);
+end;
+
+procedure CheckComponents(Table: PFILTER_PLUGIN_TABLE; Components: TAquaComponents);
+var
+  Component: TAquaComponent;
+begin
+  for Component := Low(TAquaComponent) to High(TAquaComponent) do
+    Check(PFILTER_ITEM_CHECK(FindItem(Table, AQUA_COMPONENT_NAMES[Component], 'check'))^.Value =
+      Byte(Ord(Component in Components)), 'Preset display check: ' + string(AQUA_COMPONENT_NAMES[Component]));
+end;
+
 function AlphaCenter(const Pixels: TAquaPixels; Width: Integer;
   out X, Y: Double): Double;
 var
@@ -127,6 +145,7 @@ var
 
 begin
   Video.Object_^.Flag := OBJECT_FLAG_FILTER_OBJECT;
+  PFILTER_ITEM_SELECT(FindItem(Table, '表示モード', 'select'))^.Value := Ord(adBackground);
   Edit := Default(TEDIT_SECTION); Edit.SetObjectItemValue := AcceptItem;
   Preset := FindItem(Table, 'プリセット', 'select');
   Button := FindItem(Table, '設定', 'button');
@@ -180,6 +199,37 @@ begin
   Positive := Copy(Captured);
   SetNumber('縦横比', -50); Frame;
   Check(not Same(A, Captured) and not Same(Positive, Captured), 'Negative aspect control had no effect');
+  SetNumber('縦横比', 0);
+
+  // 縦横比で短辺だけを縮め、拡大率で縦横を一緒に調整できることを確認する。
+  Item := FindItem(Table, '縦横比', 'track');
+  Check((Item^.S = -100) and (Item^.E = 100) and SameValue(Item^.Step, 0.001),
+    'Aspect range and precision');
+  SetNumber('遠近感', 0); SetNumber('拡大率', 40); Frame; A := Copy(Captured);
+  SetNumber('縦横比', 75); Frame; Positive := Copy(Captured);
+  SetNumber('縦横比', -75); Frame; Negative := Copy(Captured);
+  Check((A[117 * 204 + 102].A = 255) and (A[102 * 204 + 117].A = 255) and
+    (Positive[117 * 204 + 102].A = 0) and (Negative[102 * 204 + 117].A = 0),
+    'Aspect did not narrow the rectangle');
+  for I := 0 to 203 do
+  begin
+    Check(Positive[102 * 204 + I].A = A[102 * 204 + I].A, 'Positive aspect changed width');
+    Check(Negative[I * 204 + 102].A = A[I * 204 + 102].A, 'Negative aspect changed height');
+  end;
+
+  SetNumber('縦横比', 75); SetNumber('拡大率', 80); Frame;
+  Check((Positive[102 * 204 + 150].A = 0) and (Captured[102 * 204 + 150].A = 255) and
+    (Captured[117 * 204 + 102].A = 255), 'Zoom did not enlarge both sides of the narrow rectangle');
+  SetNumber('縦横比', 99); Frame;
+  Check((Captured[102 * 204 + 150].A = 255) and (Captured[100 * 204 + 150].A = 0),
+    'Positive aspect must approach a thin horizontal strip');
+  SetNumber('縦横比', -99); Frame;
+  Check((Captured[150 * 204 + 102].A = 255) and (Captured[150 * 204 + 100].A = 0),
+    'Negative aspect must approach a thin vertical strip');
+  SetNumber('縦横比', 100); Frame;
+  Check(AlphaCenter(Captured, 204, X1, Y1) = 0, 'Positive endpoint must produce zero height');
+  SetNumber('縦横比', -100); Frame;
+  Check(AlphaCenter(Captured, 204, X1, Y1) = 0, 'Negative endpoint must produce zero width');
   SetNumber('縦横比', 0);
 
   SetNumber('3D傾斜角度', 0); SetNumber('遠近感', 0); SetNumber('拡大率', 60);
@@ -279,6 +329,7 @@ begin
   Video.Object_^.Time := 1.25; Frame;
   Check(Same(Frozen, Captured), 'Reverse seeking changed the native oil film');
   Preset(apPool);
+  CheckComponents(Table, [acSurface, acWaves]);
   Check(PFILTER_ITEM_TRACK(FindItem(Table, '油膜の量', 'track'))^.Value = 0,
     'Switching from oil to water left an unwanted oil film');
   Writeln('PASS native oil: separate patches, visible water, amount zero, size, gloss, color, animation, reverse seek and reset');
@@ -305,12 +356,13 @@ var
 
 begin
   Edit := Default(TEDIT_SECTION); Edit.SetObjectItemValue := AcceptItem;
-  PFILTER_ITEM_SELECT(FindItem(Table, '表示モード', 'select'))^.Value := Ord(adOilOverlay);
+  PFILTER_ITEM_SELECT(FindItem(Table, '表示モード', 'select'))^.Value := Ord(adImage);
   PFILTER_ITEM_SELECT(FindItem(Table, 'プリセット', 'select'))^.Value := Ord(apOil);
   PFILTER_ITEM_BUTTON(FindItem(Table, '設定', 'button'))^.Callback2(
     @Edit, Pointer(1234), '水面演出:2', '設定');
-  Check(PFILTER_ITEM_SELECT(FindItem(Table, '表示モード', 'select'))^.Value = Ord(adOilOverlay),
-    'Preset changed oil overlay mode');
+  Check(PFILTER_ITEM_SELECT(FindItem(Table, '表示モード', 'select'))^.Value = Ord(adImage),
+    'Preset changed display mode');
+  CheckComponents(Table, [acOil]);
   for I := Ord(atX) to Ord(atTransparency) do
     SetNumber(string(AQUA_TRACK_DEFINITIONS[TAquaTrack(I)].Name), 0);
   SetNumber('拡大率', 100); SetNumber('3D傾斜角度', 0); SetNumber('遠近感', 0);
@@ -341,6 +393,9 @@ begin
     end;
   end;
   Check(Changed > 500, 'Overlay did not produce visible oil');
+  SetComponents(Table, []); Frame;
+  Check(Same(HostInput, Captured), 'Oil display off still rendered a film');
+  SetComponents(Table, [acOil]);
   Check(TextureContrast / TexturePairs > 85, 'Overlay erased source texture contrast');
   SetLength(Comparison, 408 * 204);
   for Y := 0 to 203 do
@@ -371,7 +426,8 @@ procedure VerifyNativeWavesAndVortex(Table: PFILTER_PLUGIN_TABLE; var Video: TFI
 var
   Edit: TEDIT_SECTION;
   First, Clockwise: TAquaPixels;
-  I, X, Y, Changed: Integer;
+  LiquidColor: PFILTER_ITEM_COLOR;
+  I, X, Y, Changed, SmallChanged: Integer;
 
   procedure Number(const Name: string; Value: Double);
   begin PFILTER_ITEM_TRACK(FindItem(Table, Name, 'track'))^.Value := Value; end;
@@ -385,10 +441,12 @@ var
 
 begin
   Edit := Default(TEDIT_SECTION); Edit.SetObjectItemValue := AcceptItem;
-  PFILTER_ITEM_SELECT(FindItem(Table, '表示モード', 'select'))^.Value := Ord(adWaveOverlay);
+  PFILTER_ITEM_SELECT(FindItem(Table, '表示モード', 'select'))^.Value := Ord(adImage);
   PFILTER_ITEM_SELECT(FindItem(Table, 'プリセット', 'select'))^.Value := Ord(apCoffee);
   PFILTER_ITEM_BUTTON(FindItem(Table, '設定', 'button'))^.Callback2(@Edit, Pointer(1234), '水面演出:2', '設定');
   for I := Ord(atX) to Ord(atTransparency) do Number(string(AQUA_TRACK_DEFINITIONS[TAquaTrack(I)].Name), 0);
+  PFILTER_ITEM_SELECT(FindItem(Table, '水面形状', 'select'))^.Value := Ord(asEllipse);
+  CheckComponents(Table, [acWaves]);
   Number('拡大率', 68); Number('3D傾斜角度', 0); Number('遠近感', 0);
   Video.Object_^.Flag := 0; Video.Object_^.Width := 384; Video.Object_^.Height := 256;
   Video.GetImageData := GetImage;
@@ -414,6 +472,53 @@ begin
   Check(Changed > 500, 'Coffee waves not visible');
   Frame(2); Check(not Same(First, Captured), 'Coffee waves did not animate');
   Frame(1); Check(Same(First, Captured), 'Coffee reverse seek changed output');
+  // 「画像に波」は元の色を使い、「なし」では指定した色も液面だけに重ねる。
+  LiquidColor := FindItem(Table, '液体色', 'color');
+  LiquidColor^.R := 101; LiquidColor^.G := 185; LiquidColor^.B := 220;
+  Frame(1);
+  Check(Same(First, Captured), 'Untinted waves unexpectedly used the liquid color');
+  SetComponents(Table, []); Frame(1);
+  Check(Same(HostInput, Captured), 'Wave display off still distorted the image');
+  SetComponents(Table, [acSurface, acWaves]);
+  Frame(1); First := Copy(Captured);
+  LiquidColor^.R := 220; LiquidColor^.G := 100; LiquidColor^.B := 50;
+  Frame(1); Changed := 0;
+  Check(not Same(First, Captured), 'User image ignores the liquid color');
+  for I := 0 to High(Captured) do
+  begin
+    Check(Captured[I].A = HostInput[I].A, 'User image changed source alpha');
+    if not CompareMem(@Captured[I], @HostInput[I], SizeOf(TPIXEL_RGBA)) then
+    begin
+      X := I mod 384; Y := I div 384;
+      Check((Abs(X - 192) <= 82) and (Abs(Y - 128) <= 82), 'User image changed pixels outside the liquid');
+      Inc(Changed);
+    end;
+  end;
+  Number('拡大率', 32); Frame(1); SmallChanged := 0;
+  for I := 0 to High(Captured) do
+  begin
+    Check(Captured[I].A = HostInput[I].A, 'Image filter zoom changed source alpha');
+    if not CompareMem(@Captured[I], @HostInput[I], SizeOf(TPIXEL_RGBA)) then
+    begin
+      X := I mod 384; Y := I div 384;
+      Check((Abs(X - 192) <= 40) and (Abs(Y - 128) <= 40), 'Image filter zoom moved the source');
+      Inc(SmallChanged);
+    end;
+  end;
+  Check((SmallChanged > 0) and (SmallChanged < Changed), 'Image filter zoom did not resize the liquid');
+  Number('拡大率', 0); Frame(1);
+  Check(Same(HostInput, Captured), 'Image filter zero zoom did not restore the source');
+  Number('拡大率', 68); Number('縦横比', 100); Frame(1);
+  Check(Same(HostInput, Captured), 'Image filter zero height did not restore the source');
+  Number('縦横比', -100); Frame(1);
+  Check(Same(HostInput, Captured), 'Image filter zero width did not restore the source');
+  Number('縦横比', 0);
+  Video.Object_^.Flag := OBJECT_FLAG_FILTER_OBJECT; Frame(1);
+  Check((Captured[0].A = 0) and
+    (Captured[128 * 384 + 192].A > 0) and (Captured[230 * 384 + 192].A = 0),
+    'Standalone user image must still project its surface');
+  Video.Object_^.Flag := 0;
+  SetComponents(Table, [acWaves]);
   Number('透明度', 100); Frame(1); Check(Same(HostInput, Captured), 'Wave transparency did not restore source');
   Number('透明度', 0); Number('拡大率', 0); Frame(1);
   Check(Same(HostInput, Captured), 'Wave zero zoom did not restore source');
@@ -422,7 +527,7 @@ begin
   Number('波の強さ', 25); Number('渦の強さ', 65); Number('流速', 0); Frame(2);
   Clockwise := Copy(Captured); Number('渦の強さ', -65); Frame(2);
   Check(not Same(Clockwise, Captured), 'Wave vortex direction did not change image');
-  PFILTER_ITEM_SELECT(FindItem(Table, '表示モード', 'select'))^.Value := Ord(adOilOverlay);
+  SetComponents(Table, [acOil]);
   Number('油膜の量', 48); Number('渦の強さ', 65); Frame(2); Clockwise := Copy(Captured);
   Frame(3); Check(not Same(Clockwise, Captured), 'Oil vortex did not animate');
   Frame(2); Check(Same(Clockwise, Captured), 'Oil vortex reverse seek changed output');
@@ -435,7 +540,7 @@ begin
   PFILTER_ITEM_BUTTON(FindItem(Table, '設定', 'button'))^.Callback2(@Edit, Pointer(1234), '水面演出:2', '設定');
   Check(PFILTER_ITEM_TRACK(FindItem(Table, '渦の強さ', 'track'))^.Value = 0, 'Water preset did not reset vortex');
   // 間引いた格子の境界でも、波と光沢をほぼ止めた一様画像に暗い縁を作らない。
-  PFILTER_ITEM_SELECT(FindItem(Table, '表示モード', 'select'))^.Value := Ord(adWaveOverlay);
+  SetComponents(Table, [acWaves]);
   PFILTER_ITEM_SELECT(FindItem(Table, '水面形状', 'select'))^.Value := Ord(asEllipse);
   Number('波の強さ', 0); Number('波紋の量', 1); Number('泡の量', 0);
   Number('ハイライトの強さ', 0); Number('3D傾斜角度', 0); Number('遠近感', 0);
@@ -459,6 +564,10 @@ begin
   for I := 0 to High(Captured) do
     Check((Captured[I].R = 240) and (Captured[I].G = 240) and
       (Captured[I].B = 240) and (Captured[I].A = 255), 'Zero image shading darkened white liquid');
+  Number('油膜の量', 48); Frame(1);
+  Check(Same(HostInput, Captured), 'Unchecked oil affected the image');
+  SetComponents(Table, [acWaves, acOil]); Frame(1);
+  Check(not Same(HostInput, Captured), 'Wave and oil checks did not combine');
   Writeln('PASS native waves/vortex: cup bounds, alpha, disable, animation, signed rotation, seek and presets');
 end;
 
@@ -467,8 +576,9 @@ procedure VerifyNativeShore(Table: PFILTER_PLUGIN_TABLE; var Video: TFILTER_PROC
 var
   Edit: TEDIT_SECTION;
   Track: TAquaTrack;
-  A, B: TAquaPixels;
-  I, Visible, Transparent: Integer;
+  A, B, LayerInput: TAquaPixels;
+  I, Visible, Transparent, Changed: Integer;
+  LiquidColor: PFILTER_ITEM_COLOR;
   X, Y, Area, BeforeY: Double;
 
   procedure Number(const Name: string; Value: Double);
@@ -551,16 +661,66 @@ begin
   Frame(1.25);
   for I := 0 to High(Captured) do
     Check(Captured[I].A <= HostInput[I].A, 'Shore exceeded input alpha');
-  Video.Object_^.Flag := OBJECT_FLAG_FILTER_OBJECT;
-  PFILTER_ITEM_SELECT(FindItem(Table, '表示モード', 'select'))^.Value := Ord(adEffectsOnly);
+
+  PFILTER_ITEM_SELECT(FindItem(Table, '表示モード', 'select'))^.Value := Ord(adImage);
+  for I := 0 to High(HostInput) do
+    if HostInput[I].A > 0 then
+    begin
+      HostInput[I].R := 188; HostInput[I].G := 165; HostInput[I].B := 120;
+    end;
+  LiquidColor := FindItem(Table, '液体色', 'color');
+  LiquidColor^.R := 101; LiquidColor^.G := 185; LiquidColor^.B := 220;
   Frame(1.25); B := Copy(Captured);
+  I := 20 * 204 + 152;
+  Check((B[I].B > HostInput[I].B + 25) and (B[I].B > B[I].R), 'User image did not tint the sea light blue');
+  Number('海水の不透明度', 0); Frame(1.25);
+  Check(CompareMem(@Captured[I], @HostInput[I], SizeOf(TPIXEL_RGBA)), 'Zero sea opacity changed offshore image');
+  Number('海水の不透明度', 85);
+  for I := 203 * 204 to High(B) do
+    Check(CompareMem(@B[I], @HostInput[I], SizeOf(TPIXEL_RGBA)), 'User image tint reached the dry beach');
+  for I := 0 to High(B) do
+    Check(B[I].A = HostInput[I].A, 'Tinted shore changed original alpha');
+
+  // 入力画像に効果を重ねても、元アルファと波が届かない砂浜の画素を保つ。
+  PFILTER_ITEM_SELECT(FindItem(Table, '表示モード', 'select'))^.Value := Ord(adEffectsOnly);
+  Frame(1.25); Changed := 0;
+  for I := 0 to High(Captured) do
+  begin
+    Check(Captured[I].A = HostInput[I].A, 'Effects filter discarded the input alpha');
+    if not CompareMem(@Captured[I], @HostInput[I], SizeOf(TPIXEL_RGBA)) then Inc(Changed);
+  end;
+  Check(Changed > 0, 'Effects filter did not composite foam over the image');
+  for I := 203 * 204 to High(Captured) do
+    Check(CompareMem(@Captured[I], @HostInput[I], SizeOf(TPIXEL_RGBA)), 'Effects filter erased the dry beach');
+  SetComponents(Table, []); Frame(1.25);
+  Check(Same(HostInput, Captured), 'Disabled effects erased the input');
+  SetComponents(Table, [acSurface, acWaves]);
+  Number('透明度', 100); Frame(1.25);
+  Check(Same(HostInput, Captured), 'Hidden effects erased the input');
+  Number('透明度', 0); Number('拡大率', 0); Frame(1.25);
+  Check(Same(HostInput, Captured), 'Zero-scale effects erased the input');
+  Number('拡大率', 100);
+
+  // 単体に入力が渡る場合はアルファ合成し、空の入力では透明な効果画像を返す。
+  Video.Object_^.Flag := OBJECT_FLAG_FILTER_OBJECT;
+  LayerInput := Copy(HostInput);
+  Frame(1.25); A := Copy(Captured);
+  FillChar(HostInput[0], Length(HostInput) * SizeOf(TPIXEL_RGBA), 0);
+  Frame(1.25); B := Copy(Captured);
+  for I := 0 to High(A) do
+  begin
+    Check(A[I].A = Round(B[I].A + (255 - B[I].A) * LayerInput[I].A / 255),
+      'Effects layer replaced its input instead of compositing it');
+    if B[I].A = 0 then
+      Check(CompareMem(@A[I], @LayerInput[I], SizeOf(TPIXEL_RGBA)), 'Effects layer changed pixels outside the foam');
+  end;
   PFILTER_ITEM_SELECT(FindItem(Table, '表示モード', 'select'))^.Value := Ord(adBackground);
   Number('海水の不透明度', 0); Frame(1.25);
   Check(Same(B, Captured), 'Shore effects-only differs from isolated foam');
   Preset(apSea);
   Check(PFILTER_ITEM_SELECT(FindItem(Table, '水面形状', 'select'))^.Value = Ord(asPlane),
     'Leaving shoreline preset did not restore the original shape');
-  Writeln('PASS native shore: standalone alpha, reach, period, roughness, foam, seed, seek, placement and disable');
+  Writeln('PASS native shore: standalone alpha, reach, period, roughness, foam, seek and input compositing');
 end;
 
 procedure VerifyNativeDrain(Table: PFILTER_PLUGIN_TABLE; var Video: TFILTER_PROC_VIDEO);
@@ -653,6 +813,11 @@ begin
 end;
 
 procedure VerifyPlugin(const Path: string);
+const
+  ModeNames: array[adBackground..adEffectsOnly] of string = ('背景', 'なし', 'エフェクト');
+  ComponentGroups: array[TAquaComponent] of string = ('水面', '波', '表面の油');
+type
+  PSelectChoice = ^TFILTER_ITEM_SELECT_ITEM;
 var
   Module: HMODULE;
   Initialize: TInitialize;
@@ -668,6 +833,11 @@ var
   Button: PFILTER_ITEM_BUTTON;
   First: TAquaPixels;
   PresetImages: array[0..AQUA_PRESET_COUNT - 1] of TAquaPixels;
+  DisplayMode: PFILTER_ITEM_SELECT;
+  Choice: PSelectChoice;
+  Mode: TAquaDisplayMode;
+  Component: TAquaComponent;
+  GroupItem: Pointer;
   I, J: Integer;
 begin
   Module := LoadLibrary(PChar(Path));
@@ -685,6 +855,26 @@ begin
     Preset := PFILTER_ITEM_SELECT(Items^); Inc(Items);
     Button := PFILTER_ITEM_BUTTON(Items^);
     Check((string(Preset^.Name) = 'プリセット') and (string(Button^.Name) = '設定'), 'Preset order');
+    DisplayMode := FindItem(Table, '表示モード', 'select');
+    Check(DisplayMode^.Value = Ord(adBackground), 'Default display mode must be background');
+    Choice := PSelectChoice(DisplayMode^.List);
+    for Mode := adBackground to adEffectsOnly do
+    begin
+      Check((Choice^.Name <> nil) and (string(Choice^.Name) = ModeNames[Mode]) and
+        (Choice^.Value = Ord(Mode)), 'Display mode choice: ' + ModeNames[Mode]);
+      Inc(Choice);
+    end;
+    Check(Choice^.Name = nil, 'Display mode must contain exactly three choices');
+    for Component := Low(TAquaComponent) to High(TAquaComponent) do
+    begin
+      GroupItem := FindItem(Table, ComponentGroups[Component], 'group');
+      Items := PPointer(Table^.Items);
+      while (Items^ <> nil) and (Items^ <> GroupItem) do Inc(Items);
+      Check(Items^ = GroupItem, 'Missing settings group');
+      Inc(Items);
+      Check(Items^ = FindItem(Table, AQUA_COMPONENT_NAMES[Component], 'check'),
+        'Display check must be first in its group');
+    end;
     Scene := Default(TSCENE_INFO); Scene.Width := 204; Scene.Height := 204;
     Obj := Default(TOBJECT_INFO); Obj.Time := 32 / 30;
     Obj.Flag := OBJECT_FLAG_FILTER_OBJECT;
@@ -694,7 +884,7 @@ begin
     Video.UserData := Table^.Func_Create(1);
     Check(Video.UserData <> nil, 'Session allocation');
     try
-      // 利用者の確認プロジェクトと同じ、素材なし・204x204・背景あり・海。
+      // 初期表示モードのまま、素材なしの204x204に内蔵の海を生成する。
       SetCount := 0;
       Check(Table^.Func_Proc_Video(@Video) = 1, 'Video callback');
       Check((SetCount = 1) and (CaptureWidth = 204) and (CaptureHeight = 204), 'No image was returned');
@@ -708,6 +898,17 @@ begin
       Video.GetImageData := GetImage;
       SetCount := 0; Table^.Func_Proc_Video(@Video);
       Check((SetCount = 1) and Same(First, Captured), 'Empty filter input suppressed the generated sea');
+      PFILTER_ITEM_SELECT(FindItem(Table, '水面形状', 'select'))^.Value := Ord(asImage);
+      Table^.Func_Proc_Video(@Video);
+      Check(Same(First, Captured), 'Embedded background must render without a source mask');
+      PFILTER_ITEM_SELECT(FindItem(Table, '水面形状', 'select'))^.Value := Ord(asPlane);
+      DisplayMode^.Value := Ord(adImage);
+      Table^.Func_Proc_Video(@Video);
+      Check(Same(HostInput, Captured), 'No-background mode generated water without a source');
+      DisplayMode^.Value := Ord(adEffectsOnly);
+      Table^.Func_Proc_Video(@Video);
+      Check(not Same(First, Captured), 'Effects mode filled the background');
+      DisplayMode^.Value := Ord(adBackground);
       Obj.Time := 2.5; Table^.Func_Proc_Video(@Video);
       Check(not Same(First, Captured), 'Water does not animate');
       Obj.Time := 32 / 30; Table^.Func_Proc_Video(@Video);
@@ -730,10 +931,13 @@ begin
       // 通常の画像へのフィルターでは透明部分を維持する。
       begin
         Obj.Flag := 0; Obj.Width := 204; Obj.Height := 204;
+        DisplayMode^.Value := Ord(adImage);
         SetLength(HostInput, 204 * 204);
         FillChar(HostInput[0], Length(HostInput) * SizeOf(TPIXEL_RGBA), 0);
-        for I := 204 * 102 to High(HostInput) do HostInput[I].A := 255;
         Video.GetImageData := GetImage;
+        Table^.Func_Proc_Video(@Video);
+        Check(Same(HostInput, Captured), 'A transparent image object must not generate standalone sea');
+        for I := 204 * 102 to High(HostInput) do HostInput[I].A := 255;
         Preset^.Value := 0; Button^.Callback2(@Edit, Pointer(1234), '水面演出:2', '設定');
         Table^.Func_Proc_Video(@Video);
         for I := 0 to 204 * 102 - 1 do Check(Captured[I].A = 0, 'Transparent input was painted');
@@ -862,8 +1066,8 @@ begin
         Video.GetImageData := GetImage; SetLength(HostInput, W * H);
         for I := 0 to High(HostInput) do HostInput[I].A := 255;
         PFILTER_ITEM_TRACK(FindItem(Table, 'Y', 'track'))^.Value := -3.5;
-        PFILTER_ITEM_TRACK(FindItem(Table, '拡大率', 'track'))^.Value := 51;
-        PFILTER_ITEM_TRACK(FindItem(Table, '縦横比', 'track'))^.Value := 70;
+        PFILTER_ITEM_TRACK(FindItem(Table, '拡大率', 'track'))^.Value := 86.7;
+        PFILTER_ITEM_TRACK(FindItem(Table, '縦横比', 'track'))^.Value := 41.176;
         PFILTER_ITEM_TRACK(FindItem(Table, '透明度', 'track'))^.Value := 35;
         PFILTER_ITEM_TRACK(FindItem(Table, '渦中心X', 'track'))^.Value := 261;
         PFILTER_ITEM_TRACK(FindItem(Table, '渦中心Y', 'track'))^.Value := -0.5;
@@ -895,6 +1099,10 @@ end;
 // 同じ本番DLLを複数解像度・表示モードで測る。PNG保存とハッシュは計測外。
 // 元画像と設定を固定し、変更前後の画像一致も照合できるようにする。
 procedure ReadBenchmarkAlias(const Path: string; var Settings: TAquaSettings);
+const
+  LegacyNames: array[adBackground..adEffectsOnly] of string = ('背景あり', 'ユーザー画像', '背景なし');
+  ImageEffects: array[adOilOverlay..adWaterOverlay] of string = ('画像に油膜', '画像に波', '画像に水面');
+  ImageComponents: array[adOilOverlay..adWaterOverlay] of TAquaComponents = ([acOil], [acWaves], [acSurface]);
 var
   Lines: TStringList;
   Line, Name, Value: string;
@@ -902,12 +1110,15 @@ var
   EqualsAt: Integer;
   Track: TAquaTrack;
   Mode: TAquaDisplayMode;
+  Component: TAquaComponent;
+  Specified, Enabled: TAquaComponents;
   Shape: TAquaShape;
   Number: Double;
 begin
   Lines := TStringList.Create;
   try
     Lines.LoadFromFile(Path, TEncoding.UTF8); Reading := False;
+    Specified := []; Enabled := [];
     for Line in Lines do
     begin
       if Line.StartsWith('effect.name=') then Reading := Line = 'effect.name=水面演出';
@@ -920,13 +1131,34 @@ begin
           Check(TryStrToFloat(Value, Number, TFormatSettings.Invariant), 'Benchmark requires constant track: ' + Name);
           Settings.Tracks[Track] := Number;
         end;
-      for Mode := Low(TAquaDisplayMode) to High(TAquaDisplayMode) do
-        if (Name = '表示モード') and (Value = string(AQUA_DISPLAY_NAMES[Mode])) then Settings.DisplayMode := Mode;
+      if Name = '表示モード' then
+      begin
+        for Mode := adBackground to adEffectsOnly do
+          if (Value = string(AQUA_DISPLAY_NAMES[Mode])) or (Value = LegacyNames[Mode]) then
+          begin
+            Settings.DisplayMode := Mode;
+            Settings.Components := [acSurface, acWaves, acOil];
+          end;
+        for Mode := adOilOverlay to adWaterOverlay do
+          if Value = ImageEffects[Mode] then
+          begin
+            Settings.DisplayMode := adImage;
+            Settings.Components := ImageComponents[Mode];
+          end;
+      end;
+      for Component := Low(TAquaComponent) to High(TAquaComponent) do
+        if Name = string(AQUA_COMPONENT_NAMES[Component]) then
+        begin
+          Include(Specified, Component);
+          if Value = '1' then Include(Enabled, Component)
+          else Exclude(Enabled, Component);
+        end;
       for Shape := Low(TAquaShape) to High(TAquaShape) do
         if (Name = '水面形状') and (Value = string(AQUA_SHAPE_NAMES[Shape])) then Settings.Shape := Shape;
       if Name = '液体色' then Settings.ColorRGB := StrToInt('$' + Value);
       if Name = '油膜色' then Settings.OilColorRGB := StrToInt('$' + Value);
     end;
+    Settings.Components := (Settings.Components - Specified) + Enabled;
   finally
     Lines.Free;
   end;
@@ -997,21 +1229,21 @@ begin
       begin
         if (ParamStr(5) <> '') and (ParamStr(5) <> Names[Scenario]) then Continue;
         Settings := AquaPresetSettings(apOil);
-        Settings.DisplayMode := adOilOverlay;
+        Settings.DisplayMode := adImage;
         if Scenario in [0, 5, 7, 8] then
         begin
           Obj.Width := W; Obj.Height := H;
           Settings.Tracks[atX] := 0; Settings.Tracks[atY] := 208;
-          Settings.Tracks[atZoom] := 42.460; Settings.Tracks[atAspect] := 90;
+          Settings.Tracks[atZoom] := 80.674; Settings.Tracks[atAspect] := 47.368;
           Settings.Tracks[atTilt] := 0; Settings.Tracks[atPerspective] := 0;
           Settings.Tracks[atOilAmount] := 32; Settings.Tracks[atOilSize] := 30;
           Settings.Tracks[atOilGloss] := 55;
           if Scenario = 5 then
           begin
-            Settings := AquaPresetSettings(apCoffee); Settings.DisplayMode := adWaveOverlay;
+            Settings := AquaPresetSettings(apCoffee); Settings.DisplayMode := adImage;
             Settings.Tracks[atTilt] := 0; Settings.Tracks[atPerspective] := 0;
             Settings.Tracks[atX] := -20; Settings.Tracks[atY] := -155;
-            Settings.Tracks[atZoom] := 50; Settings.Tracks[atAspect] := 38;
+            Settings.Tracks[atZoom] := 69; Settings.Tracks[atAspect] := 27.536;
           end;
           if Scenario = 7 then
           begin
@@ -1022,8 +1254,8 @@ begin
           begin
             Settings := AquaPresetSettings(apDropRipples);
             Settings.Tracks[atY] := -8;
-            Settings.Tracks[atZoom] := 54;
-            Settings.Tracks[atAspect] := 65;
+            Settings.Tracks[atZoom] := 89.1;
+            Settings.Tracks[atAspect] := 39.394;
             Settings.Tracks[atRippleAspect] := 148;
             Settings.Tracks[atTransparency] := 35;
           end;
@@ -1033,7 +1265,10 @@ begin
           case Scenario of
             2: Settings := AquaPresetSettings(apSea);
             3: Settings.DisplayMode := adBackground;
-            4: begin Settings.DisplayMode := adImage; Settings.Shape := asImage; end;
+            4: begin
+              Settings.DisplayMode := adImage; Settings.Shape := asImage;
+              Settings.Components := [acSurface, acWaves, acOil];
+            end;
             6: Settings := AquaPresetSettings(apVortex);
           end;
         end;
@@ -1045,6 +1280,7 @@ begin
         SetLength(HostInput, Obj.Width * Obj.Height);
         for I := 0 to High(HostInput) do HostInput[I] := Source[I mod Length(Source)];
         PFILTER_ITEM_SELECT(FindItem(Table, '表示モード', 'select'))^.Value := Ord(Settings.DisplayMode);
+        SetComponents(Table, Settings.Components);
         PFILTER_ITEM_SELECT(FindItem(Table, '水面形状', 'select'))^.Value := Ord(Settings.Shape);
         PFILTER_ITEM_COLOR(FindItem(Table, '液体色', 'color'))^.R := (Settings.ColorRGB shr 16) and $FF;
         PFILTER_ITEM_COLOR(FindItem(Table, '液体色', 'color'))^.G := (Settings.ColorRGB shr 8) and $FF;

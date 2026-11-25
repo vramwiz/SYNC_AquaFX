@@ -66,9 +66,11 @@ begin
 end;
 
 procedure Settings(const S: TAquaSettings);
-var T: TAquaTrack; Color: PFILTER_ITEM_COLOR;
+var T: TAquaTrack; Color: PFILTER_ITEM_COLOR; Component: TAquaComponent;
 begin
   PFILTER_ITEM_SELECT(FindItem('表示モード', 'select'))^.Value := Ord(S.DisplayMode);
+  for Component := Low(TAquaComponent) to High(TAquaComponent) do
+    PFILTER_ITEM_CHECK(FindItem(AQUA_COMPONENT_NAMES[Component], 'check'))^.Value := Ord(Component in S.Components);
   PFILTER_ITEM_SELECT(FindItem('水面形状', 'select'))^.Value := Ord(S.Shape);
   Color := FindItem('液体色', 'color');
   Color^.R := (S.ColorRGB shr 16) and $FF; Color^.G := (S.ColorRGB shr 8) and $FF;
@@ -155,7 +157,7 @@ begin
     Input[I].B := 170; Input[I].A := I mod 256; end;
   Video.GetImageData := GetImage; Obj.Flag := 0;
   S := AquaPresetSettings(apDrain); S.Shape := asRoundedRectangle;
-  S.DisplayMode := adWaterOverlay; S.Tracks[atCornerRoundness] := 70;
+  S.DisplayMode := adImage; S.Tracks[atCornerRoundness] := 70;
   S.Tracks[atZoom] := 60; Settings(S); Frame(90, 241);
   Check(not Same(Input, Output), 'Water overlay does not affect image');
   for I := 0 to High(Input) do Check(Input[I].A = Output[I].A, 'Water overlay changed alpha');
@@ -212,13 +214,13 @@ begin
     end;
     Obj.Width := W; Obj.Height := W; Obj.Flag := 0; Video.GetImageData := GetImage;
     Pool := AquaPresetSettings(apDrain); Pool.Shape := asRoundedRectangle;
-    Pool.DisplayMode := adWaterOverlay; Pool.ColorRGB := $83C5D2;
+    Pool.DisplayMode := adImage; Pool.ColorRGB := $83C5D2;
     Pool.Tracks[atCornerRoundness] := 65; Pool.Tracks[atX] := -2 * W / 1254;
-    Pool.Tracks[atY] := 65 * W / 1254; Pool.Tracks[atZoom] := 39;
-    Pool.Tracks[atAspect] := -45; Pool.Tracks[atTransparency] := 55;
+    Pool.Tracks[atY] := 65 * W / 1254; Pool.Tracks[atZoom] := 56.55;
+    Pool.Tracks[atAspect] := -31.034; Pool.Tracks[atTransparency] := 55;
     Pool.Tracks[atVortexCenterX] := -7 * W / 1254; Pool.Tracks[atVortexCenterY] := -97 * W / 1254;
     Flush := AquaPresetSettings(apFlush);
-    Flush.Tracks[atZoom] := 74; Flush.Tracks[atAspect] := -12;
+    Flush.Tracks[atZoom] := 82.88; Flush.Tracks[atAspect] := -10.714;
     Flush.Tracks[atX] := -2 * W / 1254; Flush.Tracks[atY] := 10 * W / 1254;
     Flush.Tracks[atVortexCenterX] := Pool.Tracks[atVortexCenterX];
     Flush.Tracks[atVortexCenterY] := Pool.Tracks[atVortexCenterY];

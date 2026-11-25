@@ -99,7 +99,7 @@ var
   Flow, Reverse: TAquaFlowField;
   U, V, A, B, C, D, X, Y, E, F, G, H: Double;
 begin
-  Check((Ord(adOilOverlay) = 3) and (Ord(apMagic) = 13), 'Existing saved indices changed');
+  Check((Ord(adEffectsOnly) = 2) and (Ord(adOilOverlay) = 3) and (Ord(apMagic) = 13), 'Existing saved indices changed');
   Settings := AquaPresetSettings(apCoffee);
   Flow := TAquaFlowField.Create(Settings, 2);
   Flow.Map(0.5, 0.2, U, V, A, B, C, D);

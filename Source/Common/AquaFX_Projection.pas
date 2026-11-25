@@ -21,7 +21,9 @@ type
     FValid: Boolean;
   public
     // Width/Heightはピクセル。設定から呼出側所有の変換を作る。無効な寸法・変換ではValidが偽。
-    // ImageBounds=Trueなら正規化座標±1を入力画像の各辺へ、Falseなら水面の辺へ対応させる。
+    // 設定を値として読み、描画器所有の変換を返す。ホストや設定を変更しない。
+    // ImageBounds=Trueは正規化座標±1を入力画像の各辺、それ以外は水面の辺へ対応する。
+    // 拡大率0または縦横比±100で面積が0になる場合は無効な投影を返す。
     class function Create(Width, Height: Integer; const Settings: TAquaSettings;
       ImageBounds: Boolean = False): TAquaProjection; static;
     // X/Yは画像中心基準ではなく画像内のピクセル座標。U/Vは水面の正規化座標。
@@ -81,13 +83,15 @@ class function TAquaProjection.Create(Width, Height: Integer;
   const Settings: TAquaSettings; ImageBounds: Boolean): TAquaProjection;
 var
   RX, RY, RZ, Heading, R: TAquaMatrix3;
-  S, C, ScaleX, ScaleY, ScaleZ, HalfX, HalfY, Perspective: Double;
+  S, C, ScaleX, ScaleY, ScaleZ, HalfX, HalfY, Aspect, Perspective: Double;
   Center: array[0..2] of Double;
   Translation: array[0..2] of Double;
   I: Integer;
 begin
   Result := Default(TAquaProjection);
   if (Width <= 0) or (Height <= 0) or (Settings.Tracks[atZoom] <= 0) then Exit;
+  Aspect := Settings.Tracks[atAspect] * 0.01;
+  if Abs(Aspect) >= 1 then Exit;
   Result.FCenterX := Width * 0.5; Result.FCenterY := Height * 0.5;
   HalfX := Min(Width, Height) * 0.46; HalfY := HalfX;
   if ImageBounds then
@@ -95,8 +99,9 @@ begin
     HalfX := Width * 0.5; HalfY := Height * 0.5;
   end;
   ScaleZ := Settings.Tracks[atZoom] * 0.01;
-  ScaleX := ScaleZ * (1 + Max(0.0, Settings.Tracks[atAspect] * 0.01));
-  ScaleY := ScaleZ * (1 + Max(0.0, -Settings.Tracks[atAspect] * 0.01));
+  // 拡大率で基準寸法を決め、横長の場合は高さ、縦長の場合は幅を縮める。
+  ScaleX := ScaleZ * (1 - Max(0.0, -Aspect));
+  ScaleY := ScaleZ * (1 - Max(0.0, Aspect));
 
   RX := Default(TAquaMatrix3); RY := RX; RZ := RX; Heading := RX;
   // 下側を手前へ倒す向きを正にし、従来の透視方向の逆転を修正する。

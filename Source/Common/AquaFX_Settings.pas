@@ -10,8 +10,11 @@ interface
 
 type
   // ホスト登録と検査で同じ識別値を使う。既存の並びを保ち、項目は末尾へ追加する。
+  // 先頭3値は保存する表示モード。末尾3値は画像合成で使う内部の描画経路。
   TAquaDisplayMode = (adBackground, adImage, adEffectsOnly, adOilOverlay, adWaveOverlay,
     adWaterOverlay);
+  TAquaComponent = (acSurface, acWaves, acOil);
+  TAquaComponents = set of TAquaComponent;
   TAquaShape = (asPlane, asRectangle, asEllipse, asImage, asShore,
     asRoundedRectangle, asFlush, asRain, asSnow);
   TAquaPreset = (apSea, apCoast, apRiver, apPond, apLake, apPuddle,
@@ -38,6 +41,7 @@ type
 
   TAquaSettings = record
     DisplayMode: TAquaDisplayMode;
+    Components: TAquaComponents;
     Shape: TAquaShape;
     ColorRGB: Cardinal; // $RRGGBB
     OilColorRGB: Cardinal; // 下地とは独立した浮遊油膜の色。
@@ -53,8 +57,10 @@ const
     '海', '海岸', '川', '池', '湖', '水たまり', 'お風呂', 'プール',
     'ラーメンスープ', '味噌汁', '牛乳', 'コーヒー', '油', '魔法液体', '渦', '落水の波紋',
     '海岸の寄せ返し', '栓を抜く', 'トイレの水を流す', '雨', '雪');
-  AQUA_DISPLAY_NAMES: array[TAquaDisplayMode] of PWideChar = (
-    '背景あり', 'ユーザー画像', '背景なし', '画像に油膜', '画像に波', '画像に水面');
+  AQUA_DISPLAY_NAMES: array[adBackground..adEffectsOnly] of PWideChar = (
+    '背景', 'なし', 'エフェクト');
+  AQUA_COMPONENT_NAMES: array[TAquaComponent] of PWideChar = (
+    '水面色を重ねる', '波表示', '油膜表示');
   AQUA_SHAPE_NAMES: array[TAquaShape] of PWideChar = (
     '平面', '長方形', '円形・楕円形', '画像形状', '海岸', '角丸の四角', 'トイレの流水', '雨', '雪');
 
@@ -144,6 +150,7 @@ function AquaPresetSettings(Preset: TAquaPreset): TAquaSettings;
 begin
   Result := Default(TAquaSettings);
   Result.DisplayMode := adBackground;
+  Result.Components := [acSurface, acWaves];
   Result.Shape := asPlane;
   Result.ColorRGB := $18669B;
   Result.OilColorRGB := $E5B64A;
@@ -312,6 +319,7 @@ begin
       end;
     apMilk:
       begin
+        Result.Components := [acWaves];
         Result.Tracks[atImageShading] := 15;
         Result.ColorRGB := $EFEDDE;
         Result.Tracks[atWaveStrength] := 12;
@@ -323,6 +331,7 @@ begin
       end;
     apCoffee:
       begin
+        Result.Components := [acWaves];
         Result.ColorRGB := $412315;
         Result.Tracks[atWaveStrength] := 28;
         Result.Tracks[atWaveSpeed] := 0.7;
@@ -334,6 +343,7 @@ begin
       end;
     apOil:
       begin
+        Result.Components := [acOil];
         Result.ColorRGB := $BC941F;
         Result.OilColorRGB := $F3B934;
         Result.Tracks[atWaveStrength] := 22;
@@ -379,6 +389,7 @@ begin
       end;
     apDropRipples:
       begin
+        Result.Components := [acWaves];
         Result.Shape := asRectangle;
         Result.ColorRGB := $65BECB;
         Result.Tracks[atWaveStrength] := 0;
@@ -431,6 +442,7 @@ begin
       end;
     apDrain:
       begin
+        Result.Components := [acSurface];
         Result.Shape := asRectangle;
         Result.ColorRGB := $65BECB;
         Result.Tracks[atWaveStrength] := 6;

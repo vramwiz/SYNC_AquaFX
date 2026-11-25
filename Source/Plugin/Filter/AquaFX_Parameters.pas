@@ -30,8 +30,11 @@ var
   Selects: array[TAquaSelect] of TFILTER_ITEM_SELECT;
   Options: array[TAquaSelect, 0..AQUA_PRESET_COUNT] of TFILTER_ITEM_SELECT_ITEM;
   Tracks: array[TAquaTrack] of TFILTER_ITEM_TRACK;
+  Checks: array[TAquaComponent] of TFILTER_ITEM_CHECK;
   LiquidColor, OilColor: TFILTER_ITEM_COLOR;
   SettingsButton: TFILTER_ITEM_BUTTON;
+  SurfaceGroup, SurfaceGroupEnd: TFILTER_ITEM_GROUP;
+  WaveGroup, WaveGroupEnd: TFILTER_ITEM_GROUP;
   PlacementGroup, PlacementGroupEnd: TFILTER_ITEM_GROUP;
   OilGroup, OilGroupEnd: TFILTER_ITEM_GROUP;
   VortexGroup, VortexGroupEnd: TFILTER_ITEM_GROUP;
@@ -47,6 +50,7 @@ procedure ApplyPreset(Edit: PEDIT_SECTION; Obj: OBJECT_HANDLE;
 var
   Preset: TAquaSettings;
   Track: TAquaTrack;
+  Component: TAquaComponent;
   TargetEffect: string;
   Text: UTF8String;
 
@@ -77,6 +81,13 @@ begin
     OilColor.R := Byte((Preset.OilColorRGB shr 16) and $FF);
     OilColor.G := Byte((Preset.OilColorRGB shr 8) and $FF);
     OilColor.B := Byte(Preset.OilColorRGB and $FF);
+
+    for Component := Low(TAquaComponent) to High(TAquaComponent) do
+    begin
+      Text := UTF8String(IntToStr(Ord(Component in Preset.Components)));
+      SetItem(Checks[Component].Name, Text);
+      Checks[Component].Value := Ord(Component in Preset.Components);
+    end;
 
     for Track := Low(TAquaTrack) to High(TAquaTrack) do
     begin
@@ -120,13 +131,15 @@ begin
   RegisterSelect(slPreset, 'プリセット', AQUA_PRESET_NAMES, Ord(apSea));
   AddButton(SettingsButton, '設定', ApplyPreset);
 
-  RegisterSelect(slDisplayMode, '表示モード', AQUA_DISPLAY_NAMES,
-    Ord(Settings.DisplayMode));
+  RegisterSelect(slDisplayMode, '表示モード', AQUA_DISPLAY_NAMES, Ord(adBackground));
+  AddGroup(SurfaceGroup, '水面', 1);
+  AddCheck(Checks[acSurface], AQUA_COMPONENT_NAMES[acSurface], 1);
   RegisterSelect(slShape, '水面形状', AQUA_SHAPE_NAMES, Ord(Settings.Shape));
   AddColor(LiquidColor, '液体色', Byte(Settings.ColorRGB and $FF),
     Byte((Settings.ColorRGB shr 8) and $FF),
     Byte((Settings.ColorRGB shr 16) and $FF));
 
+  AddGroup(SurfaceGroupEnd, '', 1);
   AddGroup(PlacementGroup, '座標・変形', 1);
   for Track := atX to atTransparency do
     AddTrack(Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].Name,
@@ -134,7 +147,16 @@ begin
       AQUA_TRACK_DEFINITIONS[Track].MaxValue, AQUA_TRACK_DEFINITIONS[Track].Step);
   AddGroup(PlacementGroupEnd, '', 1);
 
-  for Track := Low(TAquaTrack) to atSeed do
+  AddGroup(WaveGroup, '波', 1);
+  AddCheck(Checks[acWaves], AQUA_COMPONENT_NAMES[acWaves], 1);
+  for Track := Low(TAquaTrack) to atFoam do
+    AddTrack(Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].Name,
+      Settings.Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].MinValue,
+      AQUA_TRACK_DEFINITIONS[Track].MaxValue,
+      AQUA_TRACK_DEFINITIONS[Track].Step);
+  AddGroup(WaveGroupEnd, '', 1);
+
+  for Track := atTilt to atSeed do
     AddTrack(Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].Name,
       Settings.Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].MinValue,
       AQUA_TRACK_DEFINITIONS[Track].MaxValue,
@@ -155,6 +177,8 @@ begin
   AddGroup(VortexGroupEnd, '', 1);
 
   AddGroup(OilGroup, '表面の油', 1);
+  // 旧プロジェクトの油膜の量を反映するため、既定のチェックは有効にする。
+  AddCheck(Checks[acOil], AQUA_COMPONENT_NAMES[acOil], 1);
   AddColor(OilColor, '油膜色', Byte(Settings.OilColorRGB and $FF),
     Byte((Settings.OilColorRGB shr 8) and $FF), Byte((Settings.OilColorRGB shr 16) and $FF));
   for Track := atOilAmount to atOilGloss do
@@ -192,17 +216,21 @@ end;
 function ReadAquaFXSettings: TAquaSettings;
 var
   Track: TAquaTrack;
+  Component: TAquaComponent;
   Value: Double;
 begin
   Result := AquaPresetSettings(apSea);
   Result.DisplayMode := TAquaDisplayMode(EnsureRange(Selects[slDisplayMode].Value,
-    Ord(Low(TAquaDisplayMode)), Ord(High(TAquaDisplayMode))));
+    Ord(adBackground), Ord(adEffectsOnly)));
   Result.Shape := TAquaShape(EnsureRange(Selects[slShape].Value,
     Ord(Low(TAquaShape)), Ord(High(TAquaShape))));
   Result.ColorRGB := (Cardinal(LiquidColor.R) shl 16) or
     (Cardinal(LiquidColor.G) shl 8) or Cardinal(LiquidColor.B);
   Result.OilColorRGB := (Cardinal(OilColor.R) shl 16) or
     (Cardinal(OilColor.G) shl 8) or Cardinal(OilColor.B);
+  Result.Components := [];
+  for Component := Low(TAquaComponent) to High(TAquaComponent) do
+    if Checks[Component].Value <> 0 then Include(Result.Components, Component);
   for Track := Low(TAquaTrack) to High(TAquaTrack) do
   begin
     Value := Tracks[Track].Value;
