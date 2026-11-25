@@ -11,7 +11,8 @@ interface
 uses
   AquaFX_Settings;
 
-// SetupPluginTableの後に呼び、DLL所有の項目を登録する。項目を呼出側で解放しない。
+// SetupPluginTableの直後に呼び、DLL所有の標準項目を保存互換の順序でテーブルへ登録する。
+// 項目のアドレスはDLLの寿命中有効。ホストが使用中のテーブルには登録し直さない。
 procedure RegisterAquaFXParameters;
 // ホストが設定した現在値を範囲内の設定へ複製する。ホスト項目や保存値は変更しない。
 function ReadAquaFXSettings: TAquaSettings;
@@ -39,6 +40,8 @@ var
   FlushGroup, FlushGroupEnd: TFILTER_ITEM_GROUP;
   WeatherGroup, WeatherGroupEnd: TFILTER_ITEM_GROUP;
 
+// EditとObjをボタン呼出中に借用し、Effectで指定したエフェクトの標準項目を保存値として更新する。
+// 表示モード・配置・シードは利用者の調整を保つ。失敗はデバッグ出力へ記録する。
 procedure ApplyPreset(Edit: PEDIT_SECTION; Obj: OBJECT_HANDLE;
   Effect, Item: PWideChar); cdecl;
 var

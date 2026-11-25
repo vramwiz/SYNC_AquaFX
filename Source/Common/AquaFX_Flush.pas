@@ -18,11 +18,12 @@ type
   private
     FCU, FCV, FProgress, FPhase, FSpin, FAmount, FWidth, FStop, FRound, FFoam: Double;
   public
-    // CU/CVは水面と独立して指定した排水口の局所座標。Progressは全長に対する0～1。
+    // CU/CVは排水口の水面座標。Timeは秒、Progressはオブジェクト全長に対する0～1。
     // 保存設定は借用中も変更せず、結果はこのフレーム内だけ使用する。
     class function Create(const Settings: TAquaSettings; Time, Progress,
       CU, CV: Double): TAquaFlush; static;
-    // U/Vは外周の半幅・半高を1とする。水膜の被覆率と弱い陰影・照りを返す。
+    // U/Vは外周の半幅・半高を1とする。Edgeは境界をぼかす水面座標での幅。
+    // 水膜の被覆率と陰影・照りを返し、この時刻の評価器を使い回せる。
     function Sample(U, V, Edge: Double): TAquaFlushSample;
   end;
 

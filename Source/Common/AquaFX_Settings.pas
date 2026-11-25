@@ -9,6 +9,7 @@
 interface
 
 type
+  // ホスト登録と検査で同じ識別値を使う。既存の並びを保ち、項目は末尾へ追加する。
   TAquaDisplayMode = (adBackground, adImage, adEffectsOnly, adOilOverlay, adWaveOverlay,
     adWaterOverlay);
   TAquaShape = (asPlane, asRectangle, asEllipse, asImage, asShore,
@@ -114,8 +115,7 @@ const
     (Name: '風の強さ'; MinValue: -100; MaxValue: 100; Step: 1),
     (Name: '雨の水たまり'; MinValue: 0; MaxValue: 100; Step: 1));
 
-// プリセットを何度適用しても、同じ基準値を返す。
-// 戻り値は独立した設定値で、ホスト項目や現在の保存設定は変更しない。
+// Presetの識別値から初期設定一式を返す。ホストの保存値を変更する処理は適用側が担当する。
 function AquaPresetSettings(Preset: TAquaPreset): TAquaSettings;
 
 implementation

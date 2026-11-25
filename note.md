@@ -328,3 +328,10 @@ cmd /c 'call "C:\Program Files (x86)\Embarcadero\Studio\37.0\bin\rsvars.bat" && 
 - Delphi 37.0の `rsvars.bat` から、同じ本番プロジェクトを `/t:Rebuild /p:Platform=Win64 /p:DCC_ExeOutput=<検査先>` で `Win64/Weather/Debug` と `Release` へ出力した。両構成とも警告0・エラー0、全回帰検査に成功し、既存19プリセットのPNGは作業前の配置AUF2とSHA-256で一致した。ログは `Win64/Weather` に保存した。
 - 検査済みReleaseを本番へ配置した。AUF2は1,978,880バイト、SHA-256 `6E4C069AD01F6FD9C2E9F7B9ABE4062E2582BF12EC580B2D100035865DFE0A12`。配置版を読み込んだ検査も成功した。Full HDの描画コールバック中央値は水たまりありの雨13.224ms、雨のみ1.679ms、雪0.849ms。AviUtl2画面上の再生は未確認。
 - `Win64/Weather/weather_preview.gif` は検査済みAUF2の透過描画を確認用の地面へ重ねた48フレーム、12fpsの比較。`Win64\Verification\AquaFX_WeatherTests.exe <AUF2の絶対パス> <Win64\Weather\PreviewFramesの絶対パス> --preview` と `Win64\Weather\MakePreview.ps1` で生成した。配布ZIPとカタログは今回の対象外。
+
+## 2026-11-25 ユニット分割と公開処理のコメント
+
+- 1,492行の `Tests/AquaFX_RenderTests.dpr` から、共通描画器と数値計算の検査を `AquaFX_RenderCoreTests.pas` へ、画素比較とPNG出力の共通処理を `AquaFX_RenderTestSupport.pas` へ移した。検査用DPRの `in` で登録する。分割後のDPRは1,129行、本番の最長ユニットは `AquaFX_Renderer.pas` の919行。
+- 本番ソースには公開処理の入出力・値の単位・画像合成の副作用・バッファの所有権と有効範囲を記載した。雨の着地点を逆シークで再現する条件と、粒を合成してから全体の透明度を掛ける理由も記載した。
+- Delphi 37.0でWin64 Debug / Releaseを全体再ビルドし、両構成で警告0・エラー0と全回帰検査の成功を確認した。作業前の配置AUF2と比較し、両構成の検査PNG全34枚とReleaseのFull HD海ベンチマーク画像のSHA-256が一致した。ログと出力は `Win64/StructureReview` に保存した。
+- 検査済みReleaseを本番へ置き、AUF2の更新時刻、SHA-256 `2421831FEB5609B8A1973601A63C50DD21B8631A82161D619BE80E087E5680BC` と配置版の雨・雪の検査成功を確認した。IDEとAviUtl2の画面上の動作は未確認。

@@ -16,9 +16,10 @@ type
     Renderer: TAquaRenderProfile;
   end;
 
-// 0を指定したAQUAFX_PROFILEで計測を無効化する。Debugの既定は有効。
+// 区間計測用のTStopwatchタイムスタンプを返す。AQUAFX_PROFILE=0で無効な場合は0を返す。
 function AquaProfileTick: Int64;
-// Profileは呼出中だけ借用する。出力失敗をホストへ伝播させない。
+// Profileは借用する計測値、Width/Heightはピクセル、Mode/Shapeは登録済みの識別値。
+// DLLの共有バッファへCSV行を追加し、一定の間隔でファイルへ書く。出力失敗は描画へ伝えない。
 procedure WriteAquaProfile(const Profile: TAquaFrameProfile;
   Width, Height, Mode, Shape: Integer);
 {$ENDIF}

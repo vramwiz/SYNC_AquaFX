@@ -11,9 +11,11 @@ interface
 uses
   AviUtl2FilterTypes, AquaFX_Settings;
 
-// 呼出側がサイズを検証・確保したストレートRGBA出力へ描く。入力と設定は借用する。
-// Timeはオブジェクト内の秒。ClipToInputは画像オブジェクトへの適用を表す。
-// 画像へ重ねる場合は同位置の入力アルファを維持する。フィルタオブジェクトは透過レイヤーを返す。
+// Width/Heightは正のピクセル数。呼出側がWidth*Height個のストレートRGBA用Outputを確保する。
+// Inputは同サイズまたは空の別配列。Timeはオブジェクト内の秒で、ClipToInputは画像オブジェクトを表す。
+// 画像へ重ねる表示モードは元の位置とアルファを保つ。「背景なし」は効果だけを返し、
+// 画像オブジェクトでは入力アルファで制限する。合成やマスクに必要な入力がなければ透明を返す。
+// Outputの全画素を更新する。配列や設定の参照は呼出中だけ借用する。
 procedure RenderAquaWeather(const Input: array of TPIXEL_RGBA; Width, Height: Integer;
   Time: Double; const Settings: TAquaSettings; ClipToInput: Boolean;
   var Output: array of TPIXEL_RGBA);
@@ -46,10 +48,13 @@ type
 
   TWeatherFrame = record
   private
+    // 呼出側の出力配列をこのフレームの描画中だけ借用する。
     FPixels: PPIXEL_RGBA;
     FWidth, FHeight: Integer;
     FUnitSize, FPixelScale, FWind: Double;
+    // FLayoutは初期配置の逆投影用。FProjectionは座標・変形も反映する最終投影用。
     FProjection, FLayout: TAquaProjection;
+    // 有効な水たまりだけを先頭から保持し、着水波紋が輪郭の外へ出ないようにする。
     FPuddles: array[0..2] of TWeatherPuddle;
     FPuddleCount: Integer;
     procedure Blend(X, Y: Integer; Color: Cardinal; Coverage: Double);
@@ -231,6 +236,7 @@ begin
     if not GroundBounds(P^.U, P^.V, P^.RadiusU * 1.27, P^.RadiusV * 1.27, P^.Bounds) then Continue;
     Inc(FPuddleCount);
     Softness := EnsureRange(3.0 / Max(1, P^.Bounds.Right - P^.Bounds.Left), 0.008, 0.24);
+    // 地面へ逆投影して輪郭を評価する。遠近で縮む側にも同じ水面形状を使う。
     for Y := P^.Bounds.Top to P^.Bounds.Bottom - 1 do
       for X := P^.Bounds.Left to P^.Bounds.Right - 1 do
       begin
@@ -346,9 +352,11 @@ begin
     if Snow then FallTime := 2.8 + UnitNoise(Key, 2) * 2.3
     else FallTime := 0.43 + UnitNoise(Key, 2) * 0.25;
     Period := FallTime + 0.82 + UnitNoise(Key, 3) * 1.40;
+    // 負の時刻も周期の先頭へ切り下げ、同じ周期番号から着地点を再現する。
     Cycle := Trunc(Clock / Period);
     if Clock < Cycle * Period then Dec(Cycle);
     Phase := Clock - Cycle * Period;
+    // 着地を時刻0とすると、降下中の雨筋と着水後の飛沫が同じ着地点を参照できる。
     Age := Phase - FallTime;
     if (Snow and (Age >= 0)) or (Age > 0.65) then Continue;
     EventKey := Key + Cycle * 6997;
@@ -437,6 +445,7 @@ begin
     end;
   end;
 
+  // 全体の透明度と入力マスクは粒同士を重ねてから掛け、交差部分だけ濃くなるのを防ぐ。
   if not (PreserveInput or MaskInput) and (Opacity = 1) then Exit;
   for I := 0 to High(Output) do
   begin

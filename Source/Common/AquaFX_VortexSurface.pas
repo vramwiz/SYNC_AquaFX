@@ -25,14 +25,15 @@ type
     FShape: TAquaShape;
   public
     // 中心は共通投影の局所座標、MX/MYは見かけの縦横差を補う距離係数。
-    // Progressはオブジェクト先頭0～最終フレーム1。保存設定を変更しない。
+    // Timeは秒、Progressはオブジェクト先頭0～最終フレーム1。この時刻の評価器を返す。
     class function Create(const Settings: TAquaSettings; Time, Progress,
       CU, CV, MX, MY: Double): TAquaVortexSurface; static;
-    // 水面座標から法線・淡い陰影・屈折・被覆率を返す。結果はこの時刻だけで有効。
+    // U/Vは水面座標、Edgeは境界をぼかす幅。高さの勾配・陰影・屈折・被覆率を返す。
     function Sample(U, V, Edge: Double): TAquaVortexSample;
     // 終盤の水面模様を上流から読むための逆移流。被覆率を薄めず、栓への流れを出す。
     // U/Vは呼出側の数値だけを更新する。通常の渦と排水前半では値を維持する。
     procedure Advect(var U, V: Double);
+    // 排水が完了し、このフレームの水面描画を省けるときTrue。
     function Empty: Boolean;
   end;
 

@@ -35,12 +35,14 @@ type
   private
     FLock: TCriticalSection;
     FRenderer: TAquaRenderer;
+    // 入出力配列はセッションが所有する。ホストへの画像の受け渡しは各コールバック内で完結する。
     FInput, FOutput: TAquaPixels;
   public
     // エフェクト1個分のロックと描画器を所有し、破棄時に全バッファを解放する。
     constructor Create;
     destructor Destroy; override;
-    // Videoは呼出中だけ借用する。画像を書き戻すが、ホスト所有ポインターは保存しない。
+    // Videoから寸法・時刻・入力画像を取り出し、描画できる場合はホストへ画素を返す。
+    // 同じセッションの作業領域はロックで保護し、ホスト所有ポインターは呼出中だけ借用する。
     procedure Render(Video: PFILTER_PROC_VIDEO);
   end;
 

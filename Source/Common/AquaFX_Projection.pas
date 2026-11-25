@@ -20,14 +20,15 @@ type
     FHeightX, FHeightY, FHeightDepth: Double;
     FValid: Boolean;
   public
-    // 設定を値として読み、描画器所有の変換を返す。ホストや設定を変更しない。
-    // ImageBounds=Trueは正規化座標±1を入力画像の各辺、それ以外は水面の辺へ対応する。
+    // Width/Heightはピクセル。設定から呼出側所有の変換を作る。無効な寸法・変換ではValidが偽。
+    // ImageBounds=Trueなら正規化座標±1を入力画像の各辺へ、Falseなら水面の辺へ対応させる。
     class function Create(Width, Height: Integer; const Settings: TAquaSettings;
       ImageBounds: Boolean = False): TAquaProjection; static;
     // X/Yは画像中心基準ではなく画像内のピクセル座標。U/Vは水面の正規化座標。
     // カメラの背面・近すぎる面・変換不能な面ではFalseを返す。
     function ScreenToSurface(X, Y: Double; out U, V: Double): Boolean;
-    // 水面上のU/Vを画像内のピクセル座標へ投影する。出力範囲外への投影も許す。
+    // 水面上のU/Vをピクセル座標X/Yへ投影する。画面外も返すので必要なら呼出側で切り取る。
+    // カメラの背面・近すぎる面・無効な変換ではFalseを返す。
     function SurfaceToScreen(U, V: Double; out X, Y: Double): Boolean;
     // 水面に垂直な高さを加えて投影する。高さ1は拡大・回転前の水面基準の半辺長。
     // Height=0は水面そのもの。カメラ背面と近すぎる点はFalseを返す。

@@ -30,7 +30,7 @@ type
     FCycle, FReach, FRoughness, FWaterOpacity, FFoam, FPersistence: Double;
     FSeed, FDriftX, FDriftY, FTravel: Double;
   public
-    // 保存設定を値として借用し、このフレームだけで有効な評価器を返す。
+    // 保存設定と秒単位のTimeから、このフレームだけで使う水際の評価器を返す。
     class function Create(const Settings: TAquaSettings; Time: Double): TAquaShore; static;
     // 岸に沿うUから、このフレームの水際位置と位相を返す。
     // 同じUの列内で再利用できる。次のフレームへ持ち越さない。

@@ -21,7 +21,7 @@ type
     FAmount, FScale, FGloss, FOffsetX, FOffsetY, FTime, FSeedX, FSeedY: Double;
     FR, FG, FB: Double;
   public
-    // 設定と秒単位の時刻を値として保持する。ホストや保存設定は変更しない。
+    // 設定・秒単位のTime・水面座標での流れのオフセットから、このフレームの評価器を返す。
     class function Create(const Settings: TAquaSettings; Time, FlowU, FlowV: Double): TAquaOilSurface; static;
     // 水面の局所座標と波の傾きから、その場所の油膜色・被覆率を返す。
     function Sample(U, V, GradU, GradV, Highlight: Double): TAquaOilSample;

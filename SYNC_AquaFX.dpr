@@ -27,7 +27,7 @@ uses
 
 {$R *.res}
 
-// コピー元と同じ本体バージョン条件で登録を有効にする。
+// ホストからSDK形式のVersionを受け取る。対応バージョンで登録に成功したら1、失敗時は0を返す。
 function InitializePlugin(Version: Cardinal): Byte; cdecl;
 begin
   Result := 0;
@@ -40,7 +40,7 @@ begin
   end;
 end;
 
-// 描画資源はホストのfunc_destroyでエフェクトごとに解放する。
+// 終了通知を受ける。エフェクトの描画資源は個別のfunc_destroyで回収する。
 procedure UninitializePlugin; cdecl;
 begin
 end;

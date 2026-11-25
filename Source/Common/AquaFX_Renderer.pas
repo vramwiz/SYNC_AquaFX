@@ -54,13 +54,15 @@ type
     // 大きな液面で必要になったワーカーを所有し、SDKの破棄通知中に回収する。
     destructor Destroy; override;
     {$IFDEF DEBUG}
+    // 直近の描画呼出しの計測値。次のRenderで上書きする。
     property LastProfile: TAquaRenderProfile read FLastProfile;
     {$ENDIF}
-    // Inputは借用するストレートRGBA、Timeはオブジェクト先頭からの秒数。
-    // Outputは呼出側所有の配列を指定サイズへ更新する。Inputや保存設定は変更しない。
-    // ClipToInput=Trueでは投影後の入力アルファ内だけへ描き、無効サイズではOutputを空にする。
-    // 「画像に油膜」は入力を移動せず油だけ合成する。透明度は油だけへ適用する。
-    // TimelineProgressはオブジェクト先頭0～最終フレーム1。排水・流水の進行に使用する。
+    // Width/Heightはピクセル。Inputは同サイズのストレートRGBAか、生成用の空配列。
+    // Outputは呼出側所有の別配列。指定サイズへ更新し、無効サイズでは空にする。
+    // Timeはオブジェクト先頭からの秒、TimelineProgressは先頭0～終端1で排水と流水に使う。
+    // ClipToInputは画像オブジェクトを表す。生成色は入力アルファの範囲に描く。
+    // 画像に重ねるモードは元の位置とアルファを保ち、透明度を効果に適用する。
+    // Inputや保存設定は借用中も変更しない。同一インスタンスへの呼出しは呼出側で排他する。
     procedure Render(const Input: TAquaPixels; Width, Height: Integer;
       Time: Double; const Settings: TAquaSettings; ClipToInput: Boolean;
       var Output: TAquaPixels; TimelineProgress: Double = 0);
