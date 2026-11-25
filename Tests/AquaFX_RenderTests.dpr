@@ -15,6 +15,7 @@ uses
   AquaFX_Settings in '..\Source\Common\AquaFX_Settings.pas',
   AquaFX_SurfaceShape in '..\Source\Common\AquaFX_SurfaceShape.pas',
   AquaFX_Flush in '..\Source\Common\AquaFX_Flush.pas',
+  AquaFX_Weather in '..\Source\Common\AquaFX_Weather.pas',
   AquaFX_OilSurface in '..\Source\Common\AquaFX_OilSurface.pas',
   AquaFX_Projection in '..\Source\Common\AquaFX_Projection.pas',
   AquaFX_Flow in '..\Source\Common\AquaFX_Flow.pas',
@@ -147,6 +148,10 @@ begin
   Projection := TAquaProjection.Create(640, 360, Settings);
   Check(Projection.SurfaceToScreen(1, -0.75, X1, Y1) and
     Projection.SurfaceToScreen(1, 0.75, X2, Y2) and (X1 < X2), 'Positive tilt must put upper edge farther away');
+  Check(Projection.ElevatedToScreen(1, 0.75, 0, X, Y) and
+    SameValue(X, X2) and SameValue(Y, Y2), 'Precipitation height zero missed the ground');
+  Check(Projection.ElevatedToScreen(1, 0.75, 0.45, X, Y) and
+    (Y < Y2), 'Precipitation above the ground was not projected upward');
   Settings.Tracks[atTilt] := -45;
   Projection := TAquaProjection.Create(640, 360, Settings);
   Check(Projection.SurfaceToScreen(1, -0.75, X1, Y1) and
@@ -924,7 +929,7 @@ begin
         if I = Ord(apFlush) then begin Obj.Frame := 90; Obj.FrameTotal := 241; end;
         SetCount := 0; Table^.Func_Proc_Video(@Video);
         Check(SetCount = 1, 'Preset did not produce a frame');
-        if I <> Ord(apFlush) then
+        if I < Ord(apFlush) then
           Check(Captured[102 * 204 + 102].A > 0, 'Preset surface is invisible');
         for J := 0 to I - 1 do
           Check(not Same(PresetImages[J], Captured), 'Preset images are identical');

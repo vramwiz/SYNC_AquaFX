@@ -42,6 +42,7 @@ cmd /c 'call "C:\Program Files (x86)\Embarcadero\Studio\37.0\bin\rsvars.bat" && 
 - `Source/Common/AquaFX_Settings.pas`: 共通設定、項目の範囲、プリセット初期値。
 - `Source/Common/AquaFX_Renderer.pas`: 時刻とシードによる CPU 水面描画、形状、画像変形。
 - `Source/Common/AquaFX_Projection.pas`: 符号付き傾斜、中心・位置・拡縮・3軸回転の投影。正の傾斜は上側が奥、負は下側が奥。
+- `Source/Common/AquaFX_Weather.pas` は雨筋、着水の飛沫と波紋、水たまり、雪片を透過画像へ描く。
 - `Source/Common/AquaFX_OilSurface.pas`: 時刻とシードから直接評価する浮遊油膜。下地から独立した色・被覆・縁・光沢。
 - `Source/Plugin/Filter`: 標準パラメータ、編集 API、ホスト画像の入出力、エフェクトごとの描画資源。
 - `Source/Lib`: SDK 型定義とフィルターテーブル登録の共通基盤。
@@ -64,7 +65,7 @@ cmd /c 'call "C:\Program Files (x86)\Embarcadero\Studio\37.0\bin\rsvars.bat" && 
 ```
 
 - 検査用 EXE は `Win64\Verification`、確認画像はその下の `Images` に出力する。
-- 本番配置先の `SYNC_AquaFX.auf2` を読み込み、素材なしの 204×204 描画、全面透明の入力でも生成すること、14プリセットの画像差、アニメーションと逆シーク、入力アルファの保持を確認する。
+- 本番配置先の `SYNC_AquaFX.auf2` を読み込み、素材なしの 204×204 描画、全面透明の入力でも生成すること、21プリセットの画像差、アニメーションと逆シーク、入力アルファの保持を確認する。
 - 通常 EXE 内でも形状、シード、背景なし、画像モード、無効サイズを確認する。結果を再生順へ依存させない。
 - 通常のビルド・検査では AviUtl2 と IDE を起動・操作しない。画面操作を停止された場合はその状態を維持する。
 
@@ -318,3 +319,12 @@ cmd /c 'call "C:\Program Files (x86)\Embarcadero\Studio\37.0\bin\rsvars.bat" && 
 - ユーザー指定の公開済みバージョンは v1.0.0 の1件のみ。開発中に付けた v0.1.0～v0.5.0 を公開履歴として扱わない。カタログには実際の公開版だけを記載し、開発作業のたびに履歴を増やさない。
 - `setup/SYNC_AquaFX.catalog.json` の履歴を v1.0.0 のみに修正し、ルート・配布用READMEの版表記も揃えた。本体のバイナリは変更せず、配布ZIPを更新した。
 - ZIPに格納したAUF2のXXH3-128を再計算し、JSONの `f452c856ef96343de19103bbb923b22a` と一致することを確認した。
+
+## 2026-11-25 雨と雪
+
+- ユーザーが確認した雨の試作を基に、本番の水面形状とプリセットの末尾へ「雨」「雪」を追加した。素材なしのフィルタオブジェクトを映像の上に置き、「背景なし」で重ねられる。水たまりは初期値35、0で雨筋と着地の効果だけ。雪は粒の大小・落下速度・横揺れを変える。積雪は対象外。
+- 「雨・雪」グループの量・速さ・風と、既存の3D傾斜角度・遠近感を使う。初期の傾斜は58度、速さは100。ギザつきを抑えた雨筋と飛沫を描き、着地点と水たまりの波紋は共通投影で地面へ合わせる。時刻とシードから直接計算する。画像に重ねる場合は元の位置とアルファを保つ。
+- `AquaFX_Weather.pas` を本番DPRの `in` とDPROJの `DCCReference` へ登録した。検索には既存の `Source\Common` を使う。SDK型や別プラグインは追加していない。
+- Delphi 37.0の `rsvars.bat` から、同じ本番プロジェクトを `/t:Rebuild /p:Platform=Win64 /p:DCC_ExeOutput=<検査先>` で `Win64/Weather/Debug` と `Release` へ出力した。両構成とも警告0・エラー0、全回帰検査に成功し、既存19プリセットのPNGは作業前の配置AUF2とSHA-256で一致した。ログは `Win64/Weather` に保存した。
+- 検査済みReleaseを本番へ配置した。AUF2は1,978,880バイト、SHA-256 `6E4C069AD01F6FD9C2E9F7B9ABE4062E2582BF12EC580B2D100035865DFE0A12`。配置版を読み込んだ検査も成功した。Full HDの描画コールバック中央値は水たまりありの雨13.224ms、雨のみ1.679ms、雪0.849ms。AviUtl2画面上の再生は未確認。
+- `Win64/Weather/weather_preview.gif` は検査済みAUF2の透過描画を確認用の地面へ重ねた48フレーム、12fpsの比較。`Win64\Verification\AquaFX_WeatherTests.exe <AUF2の絶対パス> <Win64\Weather\PreviewFramesの絶対パス> --preview` と `Win64\Weather\MakePreview.ps1` で生成した。配布ZIPとカタログは今回の対象外。

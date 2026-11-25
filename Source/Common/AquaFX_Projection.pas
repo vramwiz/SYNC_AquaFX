@@ -17,6 +17,7 @@ type
   private
     FForward, FInverse: TAquaMatrix3;
     FCenterX, FCenterY: Double;
+    FHeightX, FHeightY, FHeightDepth: Double;
     FValid: Boolean;
   public
     // 設定を値として読み、描画器所有の変換を返す。ホストや設定を変更しない。
@@ -28,6 +29,9 @@ type
     function ScreenToSurface(X, Y: Double; out U, V: Double): Boolean;
     // 水面上のU/Vを画像内のピクセル座標へ投影する。出力範囲外への投影も許す。
     function SurfaceToScreen(U, V: Double; out X, Y: Double): Boolean;
+    // 水面に垂直な高さを加えて投影する。高さ1は拡大・回転前の水面基準の半辺長。
+    // Height=0は水面そのもの。カメラ背面と近すぎる点はFalseを返す。
+    function ElevatedToScreen(U, V, Height: Double; out X, Y: Double): Boolean;
     // 透視投影の距離係数。1より大きい面は遠く、小さい面は近い。
     function DepthAt(U, V: Double): Double;
     property Valid: Boolean read FValid;
@@ -121,6 +125,10 @@ begin
   Perspective := Settings.Tracks[atPerspective] * 0.006 / (Min(Width, Height) * 0.46);
   for I := 0 to 2 do Result.FForward[2, I] := Result.FForward[2, I] * Perspective;
   Result.FForward[2, 2] := Result.FForward[2, 2] + 1;
+  S := -ScaleZ * Min(Width, Height) * 0.46;
+  Result.FHeightX := R[0, 2] * S;
+  Result.FHeightY := R[1, 2] * S;
+  Result.FHeightDepth := R[2, 2] * S * Perspective;
   Result.FValid := Invert(Result.FForward, Result.FInverse);
 end;
 
@@ -151,6 +159,22 @@ begin
   if Weight < 0.02 then Exit;
   X := (FForward[0, 0] * U + FForward[0, 1] * V + FForward[0, 2]) / Weight + FCenterX;
   Y := (FForward[1, 0] * U + FForward[1, 1] * V + FForward[1, 2]) / Weight + FCenterY;
+  Result := True;
+end;
+
+function TAquaProjection.ElevatedToScreen(U, V, Height: Double; out X, Y: Double): Boolean;
+var
+  Weight: Double;
+begin
+  X := 0; Y := 0;
+  Result := False;
+  if not FValid then Exit;
+  Weight := DepthAt(U, V) + Height * FHeightDepth;
+  if Weight < 0.02 then Exit;
+  X := (FForward[0, 0] * U + FForward[0, 1] * V + FForward[0, 2] +
+    Height * FHeightX) / Weight + FCenterX;
+  Y := (FForward[1, 0] * U + FForward[1, 1] * V + FForward[1, 2] +
+    Height * FHeightY) / Weight + FCenterY;
   Result := True;
 end;
 

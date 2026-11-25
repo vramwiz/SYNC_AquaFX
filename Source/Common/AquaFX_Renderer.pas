@@ -72,7 +72,7 @@ const
 implementation
 
 uses
-  System.Math, System.Classes, System.SysUtils, AquaFX_Flow, AquaFX_SurfaceShape;
+  System.Math, System.Classes, System.SysUtils, AquaFX_Flow, AquaFX_SurfaceShape, AquaFX_Weather;
 
 const
   LUT_SIZE = 8192;
@@ -497,6 +497,16 @@ begin
   end;
   HasInput := Length(Input) = Width * Height;
   SetLength(Output, Width * Height);
+  if Settings.Shape in [asRain, asSnow] then
+  begin
+    {$IFDEF DEBUG}
+    // 雨・雪は格子を使わず直接合成する。
+    FLastProfile.SetupDone := AquaProfileTick;
+    FLastProfile.SurfaceDone := FLastProfile.SetupDone;
+    {$ENDIF}
+    RenderAquaWeather(Input, Width, Height, Time, Settings, ClipToInput, Output);
+    Exit;
+  end;
   IsOilOverlay := Settings.DisplayMode = adOilOverlay;
   IsWaveOverlay := Settings.DisplayMode = adWaveOverlay;
   IsWaterOverlay := Settings.DisplayMode = adWaterOverlay;

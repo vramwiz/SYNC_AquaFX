@@ -12,10 +12,10 @@ type
   TAquaDisplayMode = (adBackground, adImage, adEffectsOnly, adOilOverlay, adWaveOverlay,
     adWaterOverlay);
   TAquaShape = (asPlane, asRectangle, asEllipse, asImage, asShore,
-    asRoundedRectangle, asFlush);
+    asRoundedRectangle, asFlush, asRain, asSnow);
   TAquaPreset = (apSea, apCoast, apRiver, apPond, apLake, apPuddle,
     apBath, apPool, apRamen, apMiso, apMilk, apCoffee, apOil, apMagic, apVortex,
-    apDropRipples, apShore, apDrain, apFlush);
+    apDropRipples, apShore, apDrain, apFlush, apRain, apSnow);
   TAquaTrack = (atWaveStrength, atWaveSpeed, atWaveDetail,
     atFlowDirection, atFlowSpeed, atRippleAmount, atRippleSize,
     atRippleSpeed, atViscosity, atReflection, atHighlight, atFoam,
@@ -27,7 +27,8 @@ type
     atRippleScatter, atRippleAspect,
     atShoreReach, atShorePeriod, atShoreRoughness, atShoreWaterOpacity, atShoreFoamLife,
     atVortexCenterX, atVortexCenterY, atVortexDepth, atVortexPull, atDrainAmount,
-    atCornerRoundness, atFlushAmount, atFlushWidth, atFlushStop);
+    atCornerRoundness, atFlushAmount, atFlushWidth, atFlushStop,
+    atWeatherAmount, atWeatherSpeed, atWeatherWind, atRainPuddles);
 
   TAquaTrackDefinition = record
     Name: PWideChar;
@@ -50,11 +51,11 @@ const
   AQUA_PRESET_NAMES: array[TAquaPreset] of PWideChar = (
     '海', '海岸', '川', '池', '湖', '水たまり', 'お風呂', 'プール',
     'ラーメンスープ', '味噌汁', '牛乳', 'コーヒー', '油', '魔法液体', '渦', '落水の波紋',
-    '海岸の寄せ返し', '栓を抜く', 'トイレの水を流す');
+    '海岸の寄せ返し', '栓を抜く', 'トイレの水を流す', '雨', '雪');
   AQUA_DISPLAY_NAMES: array[TAquaDisplayMode] of PWideChar = (
     '背景あり', 'ユーザー画像', '背景なし', '画像に油膜', '画像に波', '画像に水面');
   AQUA_SHAPE_NAMES: array[TAquaShape] of PWideChar = (
-    '平面', '長方形', '円形・楕円形', '画像形状', '海岸', '角丸の四角', 'トイレの流水');
+    '平面', '長方形', '円形・楕円形', '画像形状', '海岸', '角丸の四角', 'トイレの流水', '雨', '雪');
 
   AQUA_TRACK_DEFINITIONS: array[TAquaTrack] of TAquaTrackDefinition = (
     (Name: '波の強さ'; MinValue: 0; MaxValue: 100; Step: 1),
@@ -107,7 +108,11 @@ const
     (Name: '角の丸み'; MinValue: 0; MaxValue: 100; Step: 1),
     (Name: '流水の量'; MinValue: 0; MaxValue: 100; Step: 1),
     (Name: '流水の幅'; MinValue: 5; MaxValue: 100; Step: 1),
-    (Name: '給水終了'; MinValue: 5; MaxValue: 90; Step: 1));
+    (Name: '給水終了'; MinValue: 5; MaxValue: 90; Step: 1),
+    (Name: '雨・雪の量'; MinValue: 0; MaxValue: 100; Step: 1),
+    (Name: '雨・雪の速さ'; MinValue: 0; MaxValue: 200; Step: 1),
+    (Name: '風の強さ'; MinValue: -100; MaxValue: 100; Step: 1),
+    (Name: '雨の水たまり'; MinValue: 0; MaxValue: 100; Step: 1));
 
 // プリセットを何度適用しても、同じ基準値を返す。
 // 戻り値は独立した設定値で、ホスト項目や現在の保存設定は変更しない。
@@ -172,6 +177,7 @@ begin
   Result.Tracks[atShoreFoamLife] := 70;
   Result.Tracks[atFlushWidth] := 65;
   Result.Tracks[atFlushStop] := 65;
+  Result.Tracks[atWeatherSpeed] := 100;
 
   // 器の液体は楕円・俯瞰を基準にする。
   if Preset in [apRamen, apMiso, apMilk, apCoffee, apOil, apMagic] then
@@ -443,6 +449,26 @@ begin
         Result.Tracks[atVortexDepth] := 90;
         Result.Tracks[atVortexPull] := 95;
         Result.Tracks[atDrainAmount] := 100;
+      end;
+    apRain, apSnow:
+      begin
+        Result.DisplayMode := adEffectsOnly;
+        Result.Tracks[atTilt] := 58;
+        Result.Tracks[atPerspective] := 30;
+        if Preset = apRain then
+        begin
+          Result.Shape := asRain;
+          Result.ColorRGB := $608598;
+          Result.Tracks[atWeatherAmount] := 75;
+          Result.Tracks[atWeatherWind] := 18;
+          Result.Tracks[atRainPuddles] := 35;
+        end
+        else
+        begin
+          Result.Shape := asSnow;
+          Result.Tracks[atWeatherAmount] := 55;
+          Result.Tracks[atWeatherWind] := 12;
+        end;
       end;
   end;
 end;

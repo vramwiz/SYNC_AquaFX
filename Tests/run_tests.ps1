@@ -54,6 +54,11 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Toilet verification build failed.' }
         & (Join-Path $outputDir 'AquaFX_ToiletTests.exe') $PluginPath $ImageDirectory
         if ($LASTEXITCODE -ne 0) { throw 'Toilet regression tests failed.' }
+        & $compiler '--no-config' '-B' '-Q' '-TX.exe' '-$R+' '-$Q+' '-NSSystem;Winapi;Vcl' `
+            "-U$libraryDir;$libraryDir\JA" "-E$outputDir" "-NU$dcuDir" 'AquaFX_WeatherTests.dpr'
+        if ($LASTEXITCODE -ne 0) { throw 'Weather verification build failed.' }
+        & (Join-Path $outputDir 'AquaFX_WeatherTests.exe') $PluginPath $ImageDirectory
+        if ($LASTEXITCODE -ne 0) { throw 'Weather regression tests failed.' }
     }
 }
 finally { Pop-Location }

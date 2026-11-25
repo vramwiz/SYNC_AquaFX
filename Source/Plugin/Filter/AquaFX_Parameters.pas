@@ -37,6 +37,7 @@ var
   ShoreGroup, ShoreGroupEnd: TFILTER_ITEM_GROUP;
   DrainGroup, DrainGroupEnd: TFILTER_ITEM_GROUP;
   FlushGroup, FlushGroupEnd: TFILTER_ITEM_GROUP;
+  WeatherGroup, WeatherGroupEnd: TFILTER_ITEM_GROUP;
 
 procedure ApplyPreset(Edit: PEDIT_SECTION; Obj: OBJECT_HANDLE;
   Effect, Item: PWideChar); cdecl;
@@ -177,6 +178,12 @@ begin
       Settings.Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].MinValue,
       AQUA_TRACK_DEFINITIONS[Track].MaxValue, AQUA_TRACK_DEFINITIONS[Track].Step);
   AddGroup(FlushGroupEnd, '', 1);
+  AddGroup(WeatherGroup, '雨・雪', 1);
+  for Track := atWeatherAmount to atRainPuddles do
+    AddTrack(Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].Name,
+      Settings.Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].MinValue,
+      AQUA_TRACK_DEFINITIONS[Track].MaxValue, AQUA_TRACK_DEFINITIONS[Track].Step);
+  AddGroup(WeatherGroupEnd, '', 1);
 end;
 
 function ReadAquaFXSettings: TAquaSettings;
