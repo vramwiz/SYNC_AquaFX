@@ -42,6 +42,7 @@ var
   DrainGroup, DrainGroupEnd: TFILTER_ITEM_GROUP;
   FlushGroup, FlushGroupEnd: TFILTER_ITEM_GROUP;
   WeatherGroup, WeatherGroupEnd: TFILTER_ITEM_GROUP;
+  WaterDepthGroup, WaterDepthGroupEnd: TFILTER_ITEM_GROUP;
 
 // EditとObjをボタン呼出中に借用し、Effectで指定したエフェクトの標準項目を保存値として更新する。
 // 表示モード・配置・シードは利用者の調整を保つ。失敗はデバッグ出力へ記録する。
@@ -211,6 +212,12 @@ begin
       Settings.Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].MinValue,
       AQUA_TRACK_DEFINITIONS[Track].MaxValue, AQUA_TRACK_DEFINITIONS[Track].Step);
   AddGroup(WeatherGroupEnd, '', 1);
+  AddGroup(WaterDepthGroup, '水面の立体感', 1);
+  for Track := atWaveRelief to atBubbles do
+    AddTrack(Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].Name,
+      Settings.Tracks[Track], AQUA_TRACK_DEFINITIONS[Track].MinValue,
+      AQUA_TRACK_DEFINITIONS[Track].MaxValue, AQUA_TRACK_DEFINITIONS[Track].Step);
+  AddGroup(WaterDepthGroupEnd, '', 1);
 end;
 
 function ReadAquaFXSettings: TAquaSettings;

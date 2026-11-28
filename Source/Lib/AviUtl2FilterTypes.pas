@@ -117,6 +117,10 @@ type
   TOBJECT_IMAGE_PARAM = record
     X, Y, Z, RX, RY, RZ, SX, SY, SZ, CX, CY, CZ, Alpha: Single;
   end;
+  // 現在のフレームの画像出力項目を取得するには Obj=nil, Offset=0 を渡す。
+  // 宛先は呼出側所有。画像出力項目がなければ0を返す。
+  TFILTER_PROC_VIDEO_GET_OUTPUT_IMAGE_PARAM = function(Obj: OBJECT_HANDLE;
+    Offset: Double; Param: POBJECT_IMAGE_PARAM; ParamSize: Integer): Byte; cdecl;
   PFILTER_PROC_VIDEO = ^TFILTER_PROC_VIDEO;
   TFILTER_PROC_VIDEO = record
     Scene: PSCENE_INFO;
@@ -128,7 +132,8 @@ type
     // SDK 2026/10/10: userdataまでの全ポインタを同じ順序で保持する。
     Edit: PEDIT_SECTION;
     Param: POBJECT_IMAGE_PARAM;
-    GetOutputImageParam, GetImageObject, DrawImage, DrawPoly,
+    GetOutputImageParam: TFILTER_PROC_VIDEO_GET_OUTPUT_IMAGE_PARAM;
+    GetImageObject, DrawImage, DrawPoly,
       SetDefaultAnchor, SetBlendMode, SetMaterialShine, SetSamplerMode,
       SetCullingState, SetBillboardMode, CreateImageResource,
       GetImageResourceTexture2D, CopyImageResource, ClearImageResource,

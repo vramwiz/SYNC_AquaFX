@@ -16,6 +16,7 @@ uses
   AquaFX_SurfaceShape in '..\Source\Common\AquaFX_SurfaceShape.pas',
   AquaFX_Flush in '..\Source\Common\AquaFX_Flush.pas',
   AquaFX_Weather in '..\Source\Common\AquaFX_Weather.pas',
+  AquaFX_WaterDepth in '..\Source\Common\AquaFX_WaterDepth.pas',
   AquaFX_OilSurface in '..\Source\Common\AquaFX_OilSurface.pas',
   AquaFX_Projection in '..\Source\Common\AquaFX_Projection.pas',
   AquaFX_Flow in '..\Source\Common\AquaFX_Flow.pas',
@@ -812,6 +813,152 @@ begin
   Writeln('PASS drain: depression, center, preserved placement, timeline duration, final empty, seek, zero and source alpha');
 end;
 
+var
+  HostDepthAngleX, HostDepthAngleY: Single;
+  HostDepthReads: Integer;
+
+function GetTestOutputImageParam(Obj: OBJECT_HANDLE; Offset: Double;
+  Param: POBJECT_IMAGE_PARAM; ParamSize: Integer): Byte; cdecl;
+begin
+  Result := 0;
+  if (Obj <> nil) or (Offset <> 0) or (Param = nil) or
+    (ParamSize <> SizeOf(TOBJECT_IMAGE_PARAM)) then Exit;
+  Inc(HostDepthReads);
+  Param^ := Default(TOBJECT_IMAGE_PARAM);
+  Param^.RX := HostDepthAngleX;
+  Param^.RY := HostDepthAngleY;
+  Result := 1;
+end;
+
+procedure VerifyNativeWaterDepth(Table: PFILTER_PLUGIN_TABLE; var Video: TFILTER_PROC_VIDEO);
+const
+  W = 640;
+  H = 360;
+  LayerTracks: array[0..2] of TAquaTrack = (atWaveRelief, atCaustics, atBubbles);
+var
+  Edit: TEDIT_SECTION;
+  Settings: TAquaSettings;
+  Top, Layer, Base, Positive: TAquaPixels;
+  Track, LayerTrack: TAquaTrack;
+  I: Integer;
+
+  procedure SetTrack(Track: TAquaTrack; Value: Double);
+  begin
+    PFILTER_ITEM_TRACK(FindItem(Table, string(AQUA_TRACK_DEFINITIONS[Track].Name),
+      'track'))^.Value := Value;
+  end;
+
+  procedure Frame;
+  begin
+    SetCount := 0;
+    Check(Table^.Func_Proc_Video(@Video) = 1, 'Water depth callback');
+    Check((SetCount = 1) and (CaptureWidth = W) and (CaptureHeight = H), 'Water depth frame size');
+  end;
+
+  procedure CheckAlpha(const Reference: TAquaPixels);
+  var
+    I: Integer;
+  begin
+    for I := 0 to High(Captured) do
+      Check(Captured[I].A = Reference[I].A, 'Water depth changed coverage');
+  end;
+
+begin
+  Check(SizeOf(TOBJECT_IMAGE_PARAM) = 52, 'Host image parameter size');
+  Settings := AquaPresetSettings(apShallowPool);
+  Edit := Default(TEDIT_SECTION);
+  Edit.SetObjectItemValue := AcceptItem;
+  PFILTER_ITEM_SELECT(FindItem(Table, 'プリセット', 'select'))^.Value := Ord(apShallowPool);
+  PFILTER_ITEM_BUTTON(FindItem(Table, '設定', 'button'))^.Callback2(
+    @Edit, Pointer(1234), '水面演出:2', '設定');
+  PFILTER_ITEM_SELECT(FindItem(Table, '表示モード', 'select'))^.Value := Ord(adBackground);
+  for Track := atWaveRelief to atBubbles do
+    Check(PFILTER_ITEM_TRACK(FindItem(Table, string(AQUA_TRACK_DEFINITIONS[Track].Name),
+      'track'))^.Value = Settings.Tracks[Track], 'Water depth preset parameter');
+  for Track := atX to atTransparency do
+    SetTrack(Track, Settings.Tracks[Track]);
+  Video.Object_^.Flag := OBJECT_FLAG_FILTER_OBJECT;
+  Video.Scene^.Width := W; Video.Scene^.Height := H;
+  Video.Object_^.Width := W; Video.Object_^.Height := H;
+  Video.Object_^.Frame := 0; Video.Object_^.FrameTotal := 0;
+  Video.GetImageData := nil;
+  Video.Object_^.Time := 1.25;
+  Frame;
+  Check((Captured[H div 2 * W + W div 2].A = 255) and (Captured[0].A = 0),
+    'Water depth top view coverage');
+  Top := Copy(Captured);
+  SavePNG(Top, W, H, 'shallow_pool_top.png');
+  Video.Object_^.Time := 2.10;
+  Frame;
+  Check(not Same(Top, Captured), 'Water depth did not animate');
+  Video.Object_^.Time := 1.25;
+  Frame;
+  Check(Same(Top, Captured), 'Water depth reverse seek');
+  SetTrack(atTilt, 58);
+  Frame;
+  Check(not Same(Top, Captured), 'Water depth built-in tilt');
+  SavePNG(Captured, W, H, 'shallow_pool_tilt.png');
+  PFILTER_ITEM_SELECT(FindItem(Table, '表示モード', 'select'))^.Value := Ord(adEffectsOnly);
+  Frame;
+  Check((Captured[0].A = 0) and (Captured[H div 2 * W + W div 2].A < 255),
+    'Water depth effects-only alpha');
+  SavePNG(Captured, W, H, 'shallow_pool_effects_tilt.png');
+  SetTrack(atTilt, 0);
+  Frame;
+  SavePNG(Captured, W, H, 'shallow_pool_effects_top.png');
+  PFILTER_ITEM_SELECT(FindItem(Table, '表示モード', 'select'))^.Value := Ord(adBackground);
+
+  // 通常画像の標準描画から回転角を得る。ホストに渡す画像の輪郭は回転前のまま。
+  SetTrack(atTilt, 0);
+  Video.Object_^.Flag := 0;
+  Video.GetImageData := GetImage;
+  Video.GetOutputImageParam := GetTestOutputImageParam;
+  SetLength(HostInput, W * H);
+  FillChar(HostInput[0], Length(HostInput) * SizeOf(TPIXEL_RGBA), 255);
+  for I := 0 to High(HostInput) do
+    if I mod W < 60 then HostInput[I].A := 0;
+  for LayerTrack in LayerTracks do SetTrack(LayerTrack, 0);
+  HostDepthAngleX := 67; HostDepthAngleY := 0; HostDepthReads := 0;
+  Frame;
+  Check(HostDepthReads = 0, 'Disabled water depth called the host');
+  Base := Copy(Captured);
+  for LayerTrack in LayerTracks do
+  begin
+    SetTrack(LayerTrack, Settings.Tracks[LayerTrack]);
+    HostDepthAngleX := 0;
+    Frame;
+    Layer := Copy(Captured);
+    if LayerTrack <> atWaveRelief then
+      Check(not Same(Base, Layer), 'Water depth layer missing in top view');
+    HostDepthAngleX := 67;
+    Frame;
+    Check(not Same(Layer, Captured), 'Host rotation did not move a water depth layer');
+    CheckAlpha(Base);
+    Positive := Copy(Captured);
+    HostDepthAngleX := -67;
+    Frame;
+    Check(not Same(Positive, Captured), 'Water depth ignored the direction of host rotation');
+    CheckAlpha(Base);
+    SetTrack(LayerTrack, 0);
+  end;
+  Check(HostDepthReads = 9, 'Expected one host rotation read per enabled frame');
+  for LayerTrack in LayerTracks do SetTrack(LayerTrack, Settings.Tracks[LayerTrack]);
+  HostDepthAngleX := 89.9; HostDepthAngleY := 34;
+  Frame;
+  CheckAlpha(Base);
+  Check(Captured[H div 2 * W].A = 0, 'Water depth escaped input alpha');
+  PFILTER_ITEM_SELECT(FindItem(Table, '表示モード', 'select'))^.Value := Ord(adEffectsOnly);
+  HostDepthAngleX := 0; HostDepthAngleY := 0;
+  Frame;
+  Top := Copy(Captured);
+  HostDepthAngleX := -62;
+  Frame;
+  Check(not Same(Top, Captured), 'Effects-only water depth ignored the standard rotation');
+  CheckAlpha(HostInput);
+  Video.GetOutputImageParam := nil;
+  Writeln('PASS water depth: top view, layers, host tilt, alpha and reverse seek');
+end;
+
 procedure VerifyPlugin(const Path: string);
 const
   ModeNames: array[adBackground..adEffectsOnly] of string = ('背景', 'なし', 'エフェクト');
@@ -948,6 +1095,7 @@ begin
       VerifyNativeWavesAndVortex(Table, Video);
       VerifyNativeShore(Table, Video);
       VerifyNativeDrain(Table, Video);
+      VerifyNativeWaterDepth(Table, Video);
       Video.Object_ := nil;
       Check(Table^.Func_Proc_Video(@Video) = 1, 'Invalid callback handling');
     finally

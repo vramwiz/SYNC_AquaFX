@@ -74,6 +74,7 @@ var
   Width, Height: Integer;
   FilterObject: Boolean;
   Settings: TAquaSettings;
+  HostImage: TOBJECT_IMAGE_PARAM;
   {$IFDEF DEBUG}
   Profile: TAquaFrameProfile;
   {$ENDIF}
@@ -108,9 +109,16 @@ begin
     if FilterObject and (Settings.DisplayMode = adBackground) and (Settings.Shape = asImage) and
       not HasVisiblePixels(FInput) then
       Settings.Shape := asPlane;
+    HostImage := Default(TOBJECT_IMAGE_PARAM);
+    // 標準描画の値は描画時点で読み取る。借用ポインターを保持せず、ホストの回転も変更しない。
+    if (not FilterObject) and AquaWaterDepthEnabled(Settings) and
+      Assigned(Video^.GetOutputImageParam) then
+      if Video^.GetOutputImageParam(nil, 0, @HostImage, SizeOf(HostImage)) = 0 then
+        HostImage := Default(TOBJECT_IMAGE_PARAM);
     {$IFDEF DEBUG}Profile.SettingsDone := AquaProfileTick;{$ENDIF}
     FRenderer.Render(FInput, Width, Height, Video^.Object_^.Time,
-      Settings, not FilterObject, FOutput, AquaObjectProgress(Video^.Object_^));
+      Settings, not FilterObject, FOutput, AquaObjectProgress(Video^.Object_^),
+      HostImage.RX, HostImage.RY);
     {$IFDEF DEBUG}
     Profile.RenderDone := AquaProfileTick;
     Profile.Renderer := FRenderer.LastProfile;
@@ -162,7 +170,7 @@ begin
   if not PluginTableInitialized then
   begin
     SetupPluginTable(FILTER_FLAG_VIDEO or FILTER_FLAG_FILTER or FILTER_FLAG_USERDATA,
-      EFFECT_NAME, EFFECT_GROUP, '水面演出 / SYNC_AquaFX v0.6.0', AquaFXProcVideo, nil);
+      EFFECT_NAME, EFFECT_GROUP, '水面演出 / SYNC_AquaFX v1.0.2', AquaFXProcVideo, nil);
     RegisterAquaFXParameters;
     GetPluginTable^.Func_Create := AquaFXCreate;
     GetPluginTable^.Func_Destroy := AquaFXDestroy;

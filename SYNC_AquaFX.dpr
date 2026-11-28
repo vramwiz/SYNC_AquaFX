@@ -15,6 +15,7 @@ uses
   AquaFX_SurfaceShape in 'Source\Common\AquaFX_SurfaceShape.pas',
   AquaFX_Flush in 'Source\Common\AquaFX_Flush.pas',
   AquaFX_Weather in 'Source\Common\AquaFX_Weather.pas',
+  AquaFX_WaterDepth in 'Source\Common\AquaFX_WaterDepth.pas',
   AquaFX_OilSurface in 'Source\Common\AquaFX_OilSurface.pas',
   AquaFX_Projection in 'Source\Common\AquaFX_Projection.pas',
   AquaFX_Flow in 'Source\Common\AquaFX_Flow.pas',

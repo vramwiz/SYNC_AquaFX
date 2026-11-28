@@ -19,7 +19,7 @@ type
     asRoundedRectangle, asFlush, asRain, asSnow);
   TAquaPreset = (apSea, apCoast, apRiver, apPond, apLake, apPuddle,
     apBath, apPool, apRamen, apMiso, apMilk, apCoffee, apOil, apMagic, apVortex,
-    apDropRipples, apShore, apDrain, apFlush, apRain, apSnow);
+    apDropRipples, apShore, apDrain, apFlush, apRain, apSnow, apShallowPool);
   TAquaTrack = (atWaveStrength, atWaveSpeed, atWaveDetail,
     atFlowDirection, atFlowSpeed, atRippleAmount, atRippleSize,
     atRippleSpeed, atViscosity, atReflection, atHighlight, atFoam,
@@ -32,7 +32,8 @@ type
     atShoreReach, atShorePeriod, atShoreRoughness, atShoreWaterOpacity, atShoreFoamLife,
     atVortexCenterX, atVortexCenterY, atVortexDepth, atVortexPull, atDrainAmount,
     atCornerRoundness, atFlushAmount, atFlushWidth, atFlushStop,
-    atWeatherAmount, atWeatherSpeed, atWeatherWind, atRainPuddles);
+    atWeatherAmount, atWeatherSpeed, atWeatherWind, atRainPuddles,
+    atWaveRelief, atWaterDepth, atCaustics, atBubbles);
 
   TAquaTrackDefinition = record
     Name: PWideChar;
@@ -56,7 +57,7 @@ const
   AQUA_PRESET_NAMES: array[TAquaPreset] of PWideChar = (
     '海', '海岸', '川', '池', '湖', '水たまり', 'お風呂', 'プール',
     'ラーメンスープ', '味噌汁', '牛乳', 'コーヒー', '油', '魔法液体', '渦', '落水の波紋',
-    '海岸の寄せ返し', '栓を抜く', 'トイレの水を流す', '雨', '雪');
+    '海岸の寄せ返し', '栓を抜く', 'トイレの水を流す', '雨', '雪', '浅いプール');
   AQUA_DISPLAY_NAMES: array[adBackground..adEffectsOnly] of PWideChar = (
     '背景', 'なし', 'エフェクト');
   AQUA_COMPONENT_NAMES: array[TAquaComponent] of PWideChar = (
@@ -119,12 +120,27 @@ const
     (Name: '雨・雪の量'; MinValue: 0; MaxValue: 100; Step: 1),
     (Name: '雨・雪の速さ'; MinValue: 0; MaxValue: 200; Step: 1),
     (Name: '風の強さ'; MinValue: -100; MaxValue: 100; Step: 1),
-    (Name: '雨の水たまり'; MinValue: 0; MaxValue: 100; Step: 1));
+    (Name: '雨の水たまり'; MinValue: 0; MaxValue: 100; Step: 1),
+    (Name: '波の高さ'; MinValue: 0; MaxValue: 100; Step: 1),
+    (Name: '水深'; MinValue: 0; MaxValue: 100; Step: 1),
+    (Name: '水底の光'; MinValue: 0; MaxValue: 100; Step: 1),
+    (Name: '気泡の量'; MinValue: 0; MaxValue: 100; Step: 1));
 
 // Presetの識別値から初期設定一式を返す。ホストの保存値を変更する処理は適用側が担当する。
 function AquaPresetSettings(Preset: TAquaPreset): TAquaSettings;
+// 「背景」「エフェクト」の基本形状を対象に、立体描画が有効かを返す。
+function AquaWaterDepthEnabled(const Settings: TAquaSettings): Boolean;
 
 implementation
+
+function AquaWaterDepthEnabled(const Settings: TAquaSettings): Boolean;
+begin
+  Result := (Settings.DisplayMode in [adBackground, adEffectsOnly]) and
+    (Settings.Shape in [asPlane, asRectangle, asEllipse, asRoundedRectangle]) and
+    (((acWaves in Settings.Components) and (Settings.Tracks[atWaveRelief] > 0)) or
+     ((Settings.Tracks[atWaterDepth] > 0) and
+      ((Settings.Tracks[atCaustics] > 0) or (Settings.Tracks[atBubbles] > 0))));
+end;
 
 // 利用者が水らしいと評価した「魔法液体」の動きと光沢を共通の基準にする。
 // 色・形状・配置は変更せず、返す設定値を組み立てる際だけ使用する。
@@ -481,6 +497,25 @@ begin
           Result.Tracks[atWeatherAmount] := 55;
           Result.Tracks[atWeatherWind] := 12;
         end;
+      end;
+    apShallowPool:
+      begin
+        Result := AquaPresetSettings(apPool);
+        Result.Shape := asRoundedRectangle;
+        Result.ColorRGB := $237F9F;
+        Result.Tracks[atCornerRoundness] := 16;
+        Result.Tracks[atTilt] := 0;
+        Result.Tracks[atPerspective] := 25;
+        Result.Tracks[atWaveStrength] := 32;
+        Result.Tracks[atWaveDetail] := 35;
+        Result.Tracks[atRippleAmount] := 12;
+        Result.Tracks[atReflection] := 53;
+        Result.Tracks[atHighlight] := 47;
+        Result.Tracks[atFoam] := 6;
+        Result.Tracks[atWaveRelief] := 55;
+        Result.Tracks[atWaterDepth] := 55;
+        Result.Tracks[atCaustics] := 52;
+        Result.Tracks[atBubbles] := 55;
       end;
   end;
 end;

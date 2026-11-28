@@ -17,8 +17,10 @@ type
   private
     FForward, FInverse: TAquaMatrix3;
     FCenterX, FCenterY: Double;
-    FHeightX, FHeightY, FHeightDepth: Double;
+    FHeightX, FHeightY, FHeightZ, FHeightDepth: Double;
+    FInverseHeight: array[0..2] of Double;
     FValid: Boolean;
+    procedure UpdateHeightInverse;
   public
     // Width/Heightはピクセル。設定から呼出側所有の変換を作る。無効な寸法・変換ではValidが偽。
     // 設定を値として読み、描画器所有の変換を返す。ホストや設定を変更しない。
@@ -35,6 +37,12 @@ type
     // 水面に垂直な高さを加えて投影する。高さ1は拡大・回転前の水面基準の半辺長。
     // Height=0は水面そのもの。カメラ背面と近すぎる点はFalseを返す。
     function ElevatedToScreen(U, V, Height: Double; out X, Y: Double): Boolean;
+    // 標準描画で後から加わる回転角（度）を高さの見かけの移動だけに反映する。
+    // 水面の平面投影を保ったコピーを返し、ほぼ真横で視差が発散しないようにする。
+    function WithHostTilt(RotateX, RotateY: Double): TAquaProjection;
+    // 平面のU/Vと同じ画素を通る、指定高さのU/Vを返す。
+    // Heightの単位と有効な投影範囲はElevatedToScreenと同じ。
+    function SampleAtHeight(U, V, Height: Double; out SampleU, SampleV: Double): Boolean;
     // 透視投影の距離係数。1より大きい面は遠く、小さい面は近い。
     function DepthAt(U, V: Double): Double;
     property Valid: Boolean read FValid;
@@ -134,8 +142,10 @@ begin
   S := -ScaleZ * Min(Width, Height) * 0.46;
   Result.FHeightX := R[0, 2] * S;
   Result.FHeightY := R[1, 2] * S;
-  Result.FHeightDepth := R[2, 2] * S * Perspective;
+  Result.FHeightZ := R[2, 2] * S;
+  Result.FHeightDepth := Result.FHeightZ * Perspective;
   Result.FValid := Invert(Result.FForward, Result.FInverse);
+  if Result.FValid then Result.UpdateHeightInverse;
 end;
 
 function TAquaProjection.ScreenToSurface(X, Y: Double; out U, V: Double): Boolean;
@@ -182,6 +192,47 @@ begin
   Y := (FForward[1, 0] * U + FForward[1, 1] * V + FForward[1, 2] +
     Height * FHeightY) / Weight + FCenterY;
   Result := True;
+end;
+
+procedure TAquaProjection.UpdateHeightInverse;
+var
+  I: Integer;
+begin
+  for I := 0 to 2 do
+    FInverseHeight[I] := FInverse[I, 0] * FHeightX +
+      FInverse[I, 1] * FHeightY + FInverse[I, 2] * FHeightDepth;
+end;
+
+function TAquaProjection.WithHostTilt(RotateX, RotateY: Double): TAquaProjection;
+var
+  SinX, CosX, SinY, CosY, ViewZ, InvZ: Double;
+begin
+  Result := Self;
+  if not FValid or ((RotateX = 0) and (RotateY = 0)) or
+    IsNan(RotateX) or IsNan(RotateY) or
+    (Abs(RotateX) > 1.0E6) or (Abs(RotateY) > 1.0E6) then Exit;
+  SinCos(DegToRad(RotateX), SinX, CosX);
+  SinCos(DegToRad(RotateY), SinY, CosY);
+  // 視線をオブジェクト座標に戻し、高さのずれを局所XYへ換算する。
+  ViewZ := CosX * CosY;
+  InvZ := ViewZ / Max(Sqr(ViewZ), Sqr(0.30));
+  Result.FHeightX := FHeightX + FHeightZ * SinY * InvZ;
+  Result.FHeightY := FHeightY - FHeightZ * SinX * CosY * InvZ;
+  Result.UpdateHeightInverse;
+end;
+
+function TAquaProjection.SampleAtHeight(U, V, Height: Double;
+  out SampleU, SampleV: Double): Boolean;
+var
+  Scale: Double;
+begin
+  SampleU := U; SampleV := V;
+  Scale := 1 + Height * FInverseHeight[2];
+  if not FValid or (Scale <= 0.01) then Exit(False);
+  SampleU := U * Scale - Height * FInverseHeight[0];
+  SampleV := V * Scale - Height * FInverseHeight[1];
+  Result := (DepthAt(SampleU, SampleV) + Height * FHeightDepth >= 0.02) and
+    (Abs(SampleU) < 1.0E6) and (Abs(SampleV) < 1.0E6);
 end;
 
 function TAquaProjection.DepthAt(U, V: Double): Double;

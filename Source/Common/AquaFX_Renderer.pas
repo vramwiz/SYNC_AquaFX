@@ -74,9 +74,11 @@ type
     // ClipToInput=Trueでは投影後の入力アルファ内だけへ描き、無効サイズではOutputを空にする。
     // 油膜・効果の合成は入力を移動しない。「エフェクト」は素材なしでは透明背景に描く。
     // TimelineProgressはオブジェクト先頭0～最終フレーム1。排水・流水の進行に使用する。
+    // HostRotateX/Yは後段の標準描画の角度（度）。立体描画の視差だけに使う。
     procedure Render(const Input: TAquaPixels; Width, Height: Integer;
       Time: Double; const Settings: TAquaSettings; ClipToInput: Boolean;
-      var Output: TAquaPixels; TimelineProgress: Double = 0);
+      var Output: TAquaPixels; TimelineProgress: Double = 0;
+      HostRotateX: Double = 0; HostRotateY: Double = 0);
   end;
 
 const
@@ -85,7 +87,8 @@ const
 implementation
 
 uses
-  System.Math, System.Classes, AquaFX_Flow, AquaFX_SurfaceShape, AquaFX_Weather;
+  System.Math, System.Classes, AquaFX_Flow, AquaFX_SurfaceShape, AquaFX_Weather,
+  AquaFX_WaterDepth;
 
 const
   LUT_SIZE = 8192;
@@ -617,7 +620,7 @@ end;
 
 procedure TAquaRenderer.Render(const Input: TAquaPixels; Width, Height: Integer;
   Time: Double; const Settings: TAquaSettings; ClipToInput: Boolean;
-  var Output: TAquaPixels; TimelineProgress: Double);
+  var Output: TAquaPixels; TimelineProgress, HostRotateX, HostRotateY: Double);
 type
   TWave = record KX, KY, Phase, Amplitude: Double; end;
   TRipple = record X, Y, Radius, Width, Frequency, Strength, MinD2, MaxD2: Double; end;
@@ -627,6 +630,8 @@ var
   GridW, GridH, Step, X, I, RippleCount: Integer;
   HasInput, NeedsInputMask, HasOil, KeepOilGrid, IsOilOverlay, IsWaveOverlay, IsOverlay, HasVortex: Boolean;
   HasVortexSurface, IsWaterOverlay, ColorizeOverlay, NeedSurfaceRGB, EvaluateWaves, KeepInput: Boolean;
+  HasWaterDepth, HasRelief, HasBottomLight: Boolean;
+  WaterDepth: TAquaWaterDepth;
   Mode: TAquaDisplayMode;
   Projection: TAquaProjection;
   OilSurface: TAquaOilSurface;
@@ -645,6 +650,61 @@ var
   RenderBand: TProc<Integer>;
   Scale, Edge, Age, Interval, Life, Speed, GridX: Double;
   EventID: Int64;
+
+  // 気泡は水面の合成後に描く。「エフェクト」では形状と入力のマスクを適用してRGBAで重ねる。
+  procedure CompositeBubbles;
+  const
+    BubbleColor: TPIXEL_RGBA = (R: 207; G: 244; B: 250; A: 0);
+  var
+    Destination: TAquaPixels;
+  begin
+    if not HasWaterDepth or (NeedsInputMask and not HasInput) then Exit;
+    Destination := Output;
+    WaterDepth.DrawBubbles(Width, Height, Opacity, Settings.Tracks[atZoom] * 0.01,
+      procedure(X, Y: Integer; Strength: Double)
+      var
+        Index, RowA, RowB, Left, Right: Integer;
+        GridY, FX, FY, Coverage, U, V: Double;
+        Pixel: PPIXEL_RGBA;
+        Bubble: TPIXEL_RGBA;
+      begin
+        Index := Y * Width + X;
+        Pixel := @Destination[Index];
+        if Mode = adBackground then
+        begin
+          if Pixel^.A = 0 then Exit;
+          Pixel^.R := Round(Lerp(Pixel^.R, BubbleColor.R, Strength));
+          Pixel^.G := Round(Lerp(Pixel^.G, BubbleColor.G, Strength));
+          Pixel^.B := Round(Lerp(Pixel^.B, BubbleColor.B, Strength));
+          Exit;
+        end;
+        if ClipToInput and (Pixel^.A = 0) then Exit;
+        if (GridW = Width) and (GridH = Height) then Coverage := FGrid[Index].Mask
+        else
+        begin
+          GridY := Y * (GridH - 1) / Max(1, Height - 1);
+          RowA := Trunc(GridY);
+          FY := GridY - RowA;
+          RowB := Min(RowA + 1, GridH - 1) * GridW;
+          RowA := RowA * GridW;
+          Left := FColumns[X].Left; Right := FColumns[X].Right; FX := FColumns[X].Fraction;
+          Coverage := BilinearSingle(FGrid[RowA + Left].Mask, FGrid[RowA + Right].Mask,
+            FGrid[RowB + Left].Mask, FGrid[RowB + Right].Mask, FX, FY);
+        end;
+        if Coverage <= 0 then Exit;
+        if NeedsInputMask then
+        begin
+          if (not Projection.ScreenToSurface(X + 0.5, Y + 0.5, U, V)) or
+            (Abs(U) > 1) or (Abs(V) > 1) then Exit;
+          Coverage := Coverage * SampleImage(Input, Width, Height,
+            (U + 1) * Width * 0.5 - 0.5, (V + 1) * Height * 0.5 - 0.5, True).A / 255;
+        end;
+        Bubble := BubbleColor;
+        Bubble.A := ColorByte(Strength * Coverage);
+        if Bubble.A <> 0 then Pixel^ := BlendEffectPixel(Pixel^, Bubble, ClipToInput);
+      end);
+  end;
+
 begin
   {$IFDEF DEBUG}
   FLastProfile := Default(TAquaRenderProfile);
@@ -670,6 +730,7 @@ begin
     Exit;
   end;
   Mode := Settings.DisplayMode;
+  HasWaterDepth := AquaWaterDepthEnabled(Settings);
   HasOil := (acOil in Settings.Components) and (Settings.Tracks[atOilAmount] > 0);
   if Mode = adImage then
   begin
@@ -686,7 +747,8 @@ begin
     end else if not (acSurface in Settings.Components) then
       Mode := adWaveOverlay;
   end;
-  if (Mode = adEffectsOnly) and not (acWaves in Settings.Components) and not HasOil then
+  if (Mode = adEffectsOnly) and not (acWaves in Settings.Components) and not HasOil and
+    not HasWaterDepth then
   begin
     if HasInput then Move(Input[0], Output[0], Length(Output) * SizeOf(TPIXEL_RGBA))
     else FillChar(Output[0], Length(Output) * SizeOf(TPIXEL_RGBA), 0);
@@ -718,6 +780,14 @@ begin
   end;
   if IsNan(Time) or IsInfinite(Time) then Time := 0;
   T := EnsureRange(Time, -1.0E9, 1.0E9);
+  HasRelief := False;
+  HasBottomLight := False;
+  if HasWaterDepth then
+  begin
+    WaterDepth := TAquaWaterDepth.Create(Settings, T, Projection.WithHostTilt(HostRotateX, HostRotateY));
+    HasRelief := (WaterDepth.Relief > 0) and (Settings.Tracks[atWaveStrength] > 0);
+    HasBottomLight := (Settings.Tracks[atWaterDepth] > 0) and (Settings.Tracks[atCaustics] > 0);
+  end;
   if IsNan(TimelineProgress) or IsInfinite(TimelineProgress) then TimelineProgress := 0;
   HasVortexSurface := (Settings.Tracks[atVortexDepth] > 0) or
     (Settings.Tracks[atVortexPull] > 0) or (Settings.Tracks[atDrainAmount] > 0);
@@ -862,7 +932,7 @@ begin
     FlowU, FlowV, J00, J01, J10, J11, OriginalGradU: Double;
     WaveHeight, GradU, GradV, Phase, CosPhase, Distance, RadiusDelta: Double;
     Envelope, DX, DY, InvNormal, NormalX, NormalY, NormalZ: Double;
-    Diffuse, Specular, Sky, Fresnel, Ref, Foam, Light, Shade: Double;
+    Diffuse, Specular, Sky, Fresnel, Ref, Foam, Light, Shade, ReliefHeight, BottomLight: Double;
   begin
     // 各帯が別々の格子行を担当し、水平な岸は帯ごとの列キャッシュで再利用する。
     if Settings.Shape = asShore then
@@ -915,6 +985,15 @@ begin
         begin
           // 形状で波の倍率を変えず、「魔法液体」と同じ基準で模様を生成する。
           FlowU := RotU; FlowV := RotV;
+          if HasRelief then
+          begin
+            // 大きな波で模様の位置をずらし、細かな波と光沢はその位置で評価する。
+            ReliefHeight := 0;
+            for I := 0 to 2 do
+              ReliefHeight := ReliefHeight + Waves[I].Amplitude * FastSin(
+                (RotU - OffsetU) * Waves[I].KX + (RotV - OffsetV) * Waves[I].KY + Waves[I].Phase);
+            WaterDepth.SurfaceCoordinates(RotU, RotV, ReliefHeight, FlowU, FlowV);
+          end;
           if HasVortexSurface then VortexSurface.Advect(FlowU, FlowV);
           if HasVortex then
           begin
@@ -989,6 +1068,13 @@ begin
             S.R := Saturate(Lerp(BaseR * Shade, 0.62, Ref) + Light);
             S.G := Saturate(Lerp(BaseG * Shade, 0.82, Ref) + Light);
             S.B := Saturate(Lerp(BaseB * Shade, 0.94, Ref) + Light);
+            if HasBottomLight then
+            begin
+              BottomLight := WaterDepth.BottomLight(RotU, RotV, GradU, GradV) * (1 - Ref) * (1 - Foam);
+              S.R := Saturate(S.R + BottomLight * 0.45);
+              S.G := Saturate(S.G + BottomLight * 0.72);
+              S.B := Saturate(S.B + BottomLight * 0.77);
+            end;
           end;
           S.Mask := Mask;
           S.DX := GradU * 9 * Width / 1280;
@@ -1011,6 +1097,8 @@ begin
               S.B := Lerp(S.B, OilSample.B, OilSample.Alpha);
             end;
           end;
+          if (Mode = adEffectsOnly) and HasBottomLight then
+            S.Light := Lerp(Light, 1, WaterDepth.BottomLight(RotU, RotV, GradU, GradV) * (1 - Foam));
           if Settings.Shape = asShore then
             ShoreSample.Composite(S.R, S.G, S.B, S.Mask, S.Light,
               Mode = adEffectsOnly);
@@ -1052,10 +1140,12 @@ begin
   begin
     CompositeBackground(Input, Width, Height, GridW, GridH, Opacity,
       Projection, NeedsInputMask, Output, IsWaterOverlay);
+    CompositeBubbles;
     Exit;
   end;
   CompositeProjected(Input, Width, Height, GridW, GridH, Opacity,
     Projection, Mode, Settings.Shape, NeedsInputMask, KeepOilGrid, ClipToInput, Output);
+  if Mode = adEffectsOnly then CompositeBubbles;
   {$IFDEF DEBUG}
   finally
     FLastProfile.Finished := AquaProfileTick;

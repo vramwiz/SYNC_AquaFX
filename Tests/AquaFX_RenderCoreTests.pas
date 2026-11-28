@@ -350,6 +350,85 @@ begin
   end;
 end;
 
+procedure VerifyWaterDepthEffects;
+const
+  Width = 320;
+  Height = 240;
+  LayerTracks: array[0..1] of TAquaTrack = (atCaustics, atBubbles);
+var
+  Renderer: TAquaRenderer;
+  Settings, Preset: TAquaSettings;
+  Empty, Input, First, Later, Frame: TAquaPixels;
+  Layer: TAquaTrack;
+  I: Integer;
+  RaisedAlpha: Boolean;
+begin
+  Renderer := TAquaRenderer.Create;
+  try
+    Preset := AquaPresetSettings(apShallowPool);
+    Settings := Preset;
+    Settings.DisplayMode := adEffectsOnly;
+    Settings.Components := [];
+    Settings.Tracks[atCaustics] := 0;
+    Settings.Tracks[atBubbles] := 0;
+    SetLength(Empty, Width * Height);
+    for Layer in LayerTracks do
+    begin
+      Settings.Tracks[Layer] := Preset.Tracks[Layer];
+      Renderer.Render(nil, Width, Height, 1.25, Settings, False, First);
+      Check(not Same(First, Empty), 'An underwater effect needs no waves or background');
+      for I := 0 to High(First) do
+      begin
+        Check(First[I].A < 255, 'Underwater effect is opaque');
+        if First[I].A = 0 then
+          Check((First[I].R = 0) and (First[I].G = 0) and (First[I].B = 0), 'Underwater transparent RGB');
+      end;
+      Check(First[0].A = 0, 'Underwater effect escaped the water shape');
+      Renderer.Render(nil, Width, Height, 2.10, Settings, False, Later);
+      Check(not Same(First, Later), 'Underwater effect did not animate');
+      Renderer.Render(nil, Width, Height, 1.25, Settings, False, Frame);
+      Check(Same(First, Frame), 'Underwater effect reverse seek');
+      Settings.Tracks[Layer] := 0;
+    end;
+    Settings.Tracks[atCaustics] := Preset.Tracks[atCaustics];
+    Settings.Tracks[atBubbles] := Preset.Tracks[atBubbles];
+    Settings.Tracks[atWaterDepth] := 0;
+    Renderer.Render(nil, Width, Height, 1.25, Settings, False, Frame);
+    Check(Same(Empty, Frame), 'Zero water depth left bottom light or bubbles');
+    Settings.Tracks[atWaterDepth] := Preset.Tracks[atWaterDepth];
+    Settings.Tracks[atTilt] := 58;
+    Renderer.Render(nil, Width, Height, 1.25, Settings, False, First);
+    Settings.ColorRGB := $FF0000;
+    Renderer.Render(nil, Width, Height, 1.25, Settings, False, Frame);
+    Check(Same(First, Frame), 'Effects-only water contains base liquid color');
+
+    SetLength(Input, Width * Height);
+    for I := 0 to High(Input) do
+    begin
+      Input[I].R := 31; Input[I].G := 63; Input[I].B := 110;
+      if (I mod Width >= Width div 2) then Input[I].A := 128;
+    end;
+    Renderer.Render(Input, Width, Height, 1.25, Settings, True, Frame);
+    Check(not Same(Input, Frame), 'Water depth did not blend onto the image');
+    for I := 0 to High(Frame) do
+    begin
+      Check(Frame[I].A = Input[I].A, 'Water depth changed image filter alpha');
+      if Input[I].A = 0 then
+        Check(CompareMem(@Input[I], @Frame[I], SizeOf(TPIXEL_RGBA)), 'Water depth wrote into an input alpha hole');
+    end;
+    Renderer.Render(Input, Width, Height, 1.25, Settings, False, Frame);
+    RaisedAlpha := False;
+    for I := 0 to High(Frame) do RaisedAlpha := RaisedAlpha or (Frame[I].A > Input[I].A);
+    Check(RaisedAlpha, 'Water depth standalone effect did not blend with straight alpha');
+    Settings.Tracks[atTransparency] := 100;
+    Renderer.Render(Input, Width, Height, 1.25, Settings, True, Frame);
+    Check(Same(Input, Frame), 'Invisible water depth changed input pixels');
+    Writeln('PASS water depth effects: isolated layers, transparency, reverse seek, masks and straight alpha');
+  finally
+    Renderer.Free;
+  end;
+end;
+
 procedure VerifyAquaFXRenderCore(const ImageDirectory: string);
 begin
   VerifyProjection;
@@ -358,6 +437,7 @@ begin
   VerifyShoreRetreatContinuity;
   VerifyRenderer(IncludeTrailingPathDelimiter(ImageDirectory));
   VerifyOilRenderer;
+  VerifyWaterDepthEffects;
 end;
 
 end.
